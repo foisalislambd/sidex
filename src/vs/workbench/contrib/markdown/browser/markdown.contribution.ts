@@ -18,6 +18,7 @@ import {
 	registerWorkbenchContribution2
 } from '../../../common/contributions.js';
 import { MarkdownPreviewManager } from './markdownPreview.js';
+import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 
 let _previewManager: MarkdownPreviewManager | undefined;
 
@@ -93,8 +94,9 @@ CommandsRegistry.registerCommand('markdown.showPreviewToSide', accessor => {
 	manager.showPreview(true);
 });
 
-CommandsRegistry.registerCommand('markdown.showSource', _accessor => {
-	// TODO: implement show source
+CommandsRegistry.registerCommand('markdown.showSource', async accessor => {
+	const manager = getOrCreateManager(accessor);
+	await manager.showSource();
 });
 
 CommandsRegistry.registerCommand('markdown.togglePreview', accessor => {
@@ -102,26 +104,48 @@ CommandsRegistry.registerCommand('markdown.togglePreview', accessor => {
 	manager.toggle();
 });
 
-CommandsRegistry.registerCommand('markdown.preview.refresh', _accessor => {
-	// TODO: implement refresh
+CommandsRegistry.registerCommand('markdown.preview.refresh', accessor => {
+	getOrCreateManager(accessor).refresh();
 });
 
-CommandsRegistry.registerCommand('markdown.preview.toggleLock', _accessor => {
-	// TODO: implement toggle lock
+CommandsRegistry.registerCommand('markdown.preview.toggleLock', accessor => {
+	getOrCreateManager(accessor).toggleLock();
 });
 
-CommandsRegistry.registerCommand('markdown.showPreviewSecuritySelector', _accessor => {
-	// TODO: implement security selector
+interface MarkdownSecurityPick extends IQuickPickItem {
+	id: 'strict' | 'allowScripts';
+}
+
+CommandsRegistry.registerCommand('markdown.showPreviewSecuritySelector', async accessor => {
+	const pick = await accessor.get(IQuickInputService).pick<MarkdownSecurityPick>(
+		[
+			{
+				id: 'strict',
+				label: 'Strict',
+				description: 'Do not execute scripts in the Markdown preview'
+			},
+			{
+				id: 'allowScripts',
+				label: 'Allow scripts',
+				description: 'Let the preview webview run scripts from the rendered document'
+			}
+		],
+		{ placeHolder: 'Select Markdown preview security level' }
+	);
+	if (!pick) {
+		return;
+	}
+	getOrCreateManager(accessor).setAllowScripts(pick.id === 'allowScripts');
 });
 
 CommandsRegistry.registerCommand('markdown.findAllFileReferences', _accessor => {
-	// TODO: implement find references
+	// Workspace-wide reference search for the current heading is not wired yet.
 });
 
-CommandsRegistry.registerCommand('markdown.reopenAsPreview', _accessor => {
-	// TODO: implement reopen as preview
+CommandsRegistry.registerCommand('markdown.reopenAsPreview', accessor => {
+	getOrCreateManager(accessor).showPreview();
 });
 
-CommandsRegistry.registerCommand('markdown.reopenAsSource', _accessor => {
-	// TODO: implement reopen as source
+CommandsRegistry.registerCommand('markdown.reopenAsSource', async accessor => {
+	await getOrCreateManager(accessor).showSource();
 });

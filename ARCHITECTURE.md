@@ -4,6 +4,14 @@ A technical reference for how SideX maps to VSCode's architecture.
 
 The VSCode source (MIT License) is the architectural reference. No proprietary code is used.
 
+## Parity strategy
+
+SideX stays a port of Code - OSS onto Tauri. It does not restart as a fresh fork of `microsoft/vscode` (that tree is still Electron, which is the cost this project exists to remove) and it does not throw away the workbench in favor of a Monaco-only shell.
+
+The TypeScript workbench, Monaco editor, and most contributions are already this repo. The Rust process replaces Electron's main process. Parity work means making the pieces that were stubbed, deleted, or only partly wired behave like the Code - OSS originals — copying those MIT-licensed contributions back in, license headers intact, when that is less risky than rewriting them. The name "Visual Studio Code", the VS Code logo, and the proprietary Marketplace stay out. Extensions are installed from Open VSX.
+
+The current gap list and status of each area live in [docs/VSCODE_PARITY.md](docs/VSCODE_PARITY.md).
+
 ## Process Model
 
 ```

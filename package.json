@@ -11,6 +11,7 @@
     "postbuild": "node scripts/postbuild.js",
     "preview": "vite preview",
     "tauri": "cross-env PATH=\"$PWD/scripts/bin:$PATH\" tauri",
+    "test:emmet": "node --experimental-strip-types tests/emmet/expand.test.ts",
     "lint": "eslint 'src/**/*.ts'",
     "lint:fix": "eslint --fix 'src/**/*.ts'",
     "format": "prettier --write 'src/**/*.{ts,tsx,js,json}'",

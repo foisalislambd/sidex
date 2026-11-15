@@ -1,0 +1,135 @@
+/*---------------------------------------------------------------------------------------------
+ *  SideX Terminal AI — floating prompt styles.
+ *--------------------------------------------------------------------------------------------*/
+
+.sidex-terminal-ai-overlay {
+	position: absolute;
+	inset: 0;
+	z-index: 40;
+	pointer-events: none;
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+	padding: 0 12px 14px;
+}
+
+.sidex-terminal-ai-card {
+	pointer-events: auto;
+	width: min(720px, 100%);
+	box-sizing: border-box;
+	background: var(--vscode-editorWidget-background, #1e1e1e);
+	color: var(--vscode-editorWidget-foreground, #ccc);
+	border: 1px solid var(--vscode-editorWidget-border, #454545);
+	border-radius: 8px;
+	box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+	padding: 10px 12px;
+	font-family: var(--vscode-font-family, sans-serif);
+	font-size: 12px;
+}
+
+.sidex-terminal-ai-label {
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	opacity: 0.65;
+	margin-bottom: 6px;
+}
+
+.sidex-terminal-ai-input-row {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.sidex-terminal-ai-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--vscode-input-foreground, #ccc);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 4px;
+	padding: 6px 8px;
+	font-family: inherit;
+	font-size: 12px;
+	outline: none;
+}
+
+.sidex-terminal-ai-input:focus {
+	border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.sidex-terminal-ai-submit,
+.sidex-terminal-ai-insert,
+.sidex-terminal-ai-run,
+.sidex-terminal-ai-cancel {
+	border: none;
+	border-radius: 4px;
+	padding: 6px 12px;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.sidex-terminal-ai-submit,
+.sidex-terminal-ai-run {
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #fff);
+}
+
+.sidex-terminal-ai-submit:hover,
+.sidex-terminal-ai-run:hover {
+	background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.sidex-terminal-ai-submit:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.sidex-terminal-ai-insert {
+	background: var(--vscode-button-secondaryBackground, #3a3d41);
+	color: var(--vscode-button-secondaryForeground, #ccc);
+}
+
+.sidex-terminal-ai-cancel {
+	background: transparent;
+	color: var(--vscode-descriptionForeground, #999);
+}
+
+.sidex-terminal-ai-cancel:hover {
+	color: var(--vscode-foreground, #ccc);
+}
+
+.sidex-terminal-ai-status {
+	margin-top: 6px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground, #999);
+	min-height: 0;
+}
+
+.sidex-terminal-ai-status:empty {
+	display: none;
+}
+
+.sidex-terminal-ai-result-box {
+	margin-top: 8px;
+}
+
+.sidex-terminal-ai-result {
+	display: block;
+	white-space: pre-wrap;
+	word-break: break-all;
+	background: var(--vscode-textCodeBlock-background, #2b2b2b);
+	color: var(--vscode-textPreformat-foreground, #d7ba7d);
+	border-radius: 4px;
+	padding: 8px;
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 12px;
+}
+
+.sidex-terminal-ai-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 8px;
+	justify-content: flex-end;
+}

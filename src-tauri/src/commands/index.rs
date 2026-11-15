@@ -607,6 +607,15 @@ fn get_line_at(path: &str, line_number: usize) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Ignore files consulted while walking, in precedence order (later wins).
+///
+/// `.sidexignore` removes paths from the assistant's view entirely, and
+/// `.sidexindexingignore` removes them from indexing only — both are honoured
+/// here because this walk feeds the search index. `.gitignore` applies too, so
+/// build output that is already ignored by git never reaches the index.
+pub(crate) const IGNORE_FILENAMES: [&str; 3] =
+    [".gitignore", ".sidexindexingignore", ".sidexignore"];
+
 /// Collect all files to index in a directory
 #[allow(clippy::unnecessary_wraps)]
 fn collect_files(root: &Path, options: &IndexOptions) -> Result<Vec<std::path::PathBuf>, String> {
@@ -625,20 +634,30 @@ fn collect_files(root: &Path, options: &IndexOptions) -> Result<Vec<std::path::P
 
     let mut files = Vec::new();
 
-    for entry in walkdir::WalkDir::new(root)
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder
+        .hidden(false) // keep dotfiles: they were indexed before this change
+        .parents(false) // do not inherit ignore rules from outside the workspace
         .follow_links(false)
-        .max_depth(50)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !exclude_dirs.contains(name.as_ref())
-        })
-    {
+        .max_depth(Some(50))
+        .require_git(false) // respect .gitignore/.sidexignore outside a repo too
+        .git_global(false)
+        .git_ignore(true)
+        .git_exclude(true);
+    for name in IGNORE_FILENAMES {
+        builder.add_custom_ignore_filename(name);
+    }
+    builder.filter_entry(move |e| {
+        let name = e.file_name().to_string_lossy();
+        !exclude_dirs.contains(name.as_ref())
+    });
+
+    for entry in builder.build() {
         let Ok(entry) = entry else {
             continue;
         };
 
-        if !entry.file_type().is_file() {
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
 
@@ -782,6 +801,116 @@ pub fn index_clear(state: State<'_, Arc<IndexStore>>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a throwaway workspace and delete it on drop, so the test needs no
+    /// tempfile dependency.
+    struct TempWorkspace(std::path::PathBuf);
+
+    impl TempWorkspace {
+        fn new(tag: &str) -> Self {
+            let unique = format!(
+                "sidex-index-test-{tag}-{}-{:?}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            let path = std::env::temp_dir().join(unique);
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn write(&self, rel: &str, contents: &str) {
+            let path = self.0.join(rel);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, contents).unwrap();
+        }
+    }
+
+    impl Drop for TempWorkspace {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn relative_paths(root: &Path, files: &[std::path::PathBuf]) -> Vec<String> {
+        let mut out: Vec<String> = files
+            .iter()
+            .map(|f| {
+                f.strip_prefix(root)
+                    .unwrap_or(f)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn collect_files_honours_sidexignore() {
+        let ws = TempWorkspace::new("sidexignore");
+        ws.write("keep.txt", "keep");
+        ws.write("secret/creds.txt", "nope");
+        ws.write("sub/deep.txt", "deep");
+        ws.write(".sidexignore", "secret/\n");
+
+        let options = IndexOptions {
+            file_extensions: vec!["txt".to_string()],
+            ..Default::default()
+        };
+        let files = collect_files(&ws.0, &options).unwrap();
+        let rel = relative_paths(&ws.0, &files);
+
+        assert_eq!(
+            rel,
+            vec!["keep.txt".to_string(), "sub/deep.txt".to_string()]
+        );
+    }
+
+    #[test]
+    fn collect_files_honours_sidexindexingignore_and_gitignore() {
+        let ws = TempWorkspace::new("indexingignore");
+        ws.write("keep.txt", "keep");
+        ws.write("generated/out.txt", "generated");
+        ws.write("vendor/lib.txt", "vendored");
+        ws.write(".sidexindexingignore", "generated/\n");
+        ws.write(".gitignore", "vendor/\n");
+
+        let options = IndexOptions {
+            file_extensions: vec!["txt".to_string()],
+            ..Default::default()
+        };
+        let files = collect_files(&ws.0, &options).unwrap();
+        let rel = relative_paths(&ws.0, &files);
+
+        assert_eq!(rel, vec!["keep.txt".to_string()]);
+    }
+
+    #[test]
+    fn collect_files_applies_negated_patterns() {
+        let ws = TempWorkspace::new("negate");
+        ws.write("logs/a.log", "a");
+        ws.write("logs/keep.txt", "keep");
+        ws.write("src.txt", "src");
+        // A later rule re-includes a file excluded by an earlier one.
+        ws.write(".sidexignore", "logs/*\n!logs/keep.txt\n");
+
+        let options = IndexOptions {
+            file_extensions: vec!["txt".to_string(), "log".to_string()],
+            ..Default::default()
+        };
+        let files = collect_files(&ws.0, &options).unwrap();
+        let rel = relative_paths(&ws.0, &files);
+
+        assert_eq!(
+            rel,
+            vec!["logs/keep.txt".to_string(), "src.txt".to_string()]
+        );
+    }
 
     #[test]
     fn test_calculate_score() {

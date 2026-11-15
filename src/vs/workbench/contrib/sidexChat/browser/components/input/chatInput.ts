@@ -561,6 +561,20 @@ export class ChatInput extends Component {
 			}
 		});
 
+		// Review button — one click reviews the pending diff, matching the
+		// command palette entry so the panel never lacks a visible entry point.
+		const reviewBtn = DOM.append(left, $('button.sc-model-btn.sc-review-btn')) as HTMLButtonElement;
+		reviewBtn.title = 'Review changes (Ctrl+Alt+R)';
+		const reviewIcon = document.createElement('span');
+		reviewIcon.classList.add(...ThemeIcon.asClassNameArray(Codicon.checklist), 'codicon-sm');
+		reviewBtn.appendChild(reviewIcon);
+		const reviewLabel = DOM.append(reviewBtn, $('span'));
+		reviewLabel.textContent = 'Review';
+		this.on(reviewBtn, 'click', () => {
+			void this._chatService.runReview();
+		});
+
+
 		// Context Usage badge (minimal circular progress ring matching the image) - placed on the right side of the footer
 		const contextBadge = DOM.append(right, $('div.sc-context-badge'));
 		contextBadge.title = 'View detailed context usage';

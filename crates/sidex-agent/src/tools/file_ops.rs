@@ -145,11 +145,15 @@ pub fn glob(args: &Args, ctx: &ToolContext) -> Result<String> {
         .compile_matcher();
 
     let mut matches = Vec::new();
-    for entry in ignore::WalkBuilder::new(&base)
+    let mut builder = ignore::WalkBuilder::new(&base);
+    builder
         .hidden(false)
-        .build()
-        .flatten()
-    {
+        .git_ignore(true)
+        .git_global(false)
+        .require_git(false)
+        // The assistant's own blocklist: files the user told it to stay out of.
+        .add_custom_ignore_filename(".sidexignore");
+    for entry in builder.build().flatten() {
         if entry.file_type().map_or(true, |ft| ft.is_dir()) {
             continue;
         }

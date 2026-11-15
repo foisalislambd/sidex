@@ -53,6 +53,14 @@ pub fn run(args: &Args, ctx: &ToolContext) -> Result<String> {
         rg_args.extend_from_slice(&["--type".into(), type_filter.to_string()]);
     }
 
+    // ripgrep already honours .gitignore; `.sidexignore` is the assistant's
+    // own blocklist and has to be passed explicitly. Both the search root and
+    // the workspace root are considered so a search inside a subdirectory
+    // still respects the workspace-level file.
+    for ignore_file in sidexignore_files(&search_path, &ctx.cwd) {
+        rg_args.extend_from_slice(&["--ignore-file".into(), ignore_file]);
+    }
+
     rg_args.push("--".into());
     rg_args.push(pattern.to_string());
     rg_args.push(search_path);
@@ -71,5 +79,54 @@ pub fn run(args: &Args, ctx: &ToolContext) -> Result<String> {
             }
         }
         Err(e) => bail!("failed to run rg: {e}"),
+    }
+}
+
+/// Existing `.sidexignore` files that apply to a search rooted at
+/// `search_path` inside the workspace at `cwd`.
+fn sidexignore_files(search_path: &str, cwd: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for dir in [search_path, cwd] {
+        let candidate = std::path::Path::new(dir).join(".sidexignore");
+        if candidate.is_file() {
+            let path = candidate.display().to_string();
+            if !out.contains(&path) {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sidexignore_files;
+
+    #[test]
+    fn finds_sidexignore_in_both_roots() {
+        let base = std::env::temp_dir().join(format!(
+            "sidex-grep-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let workspace = base.join("ws");
+        let nested = workspace.join("src");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(workspace.join(".sidexignore"), "secret/\n").unwrap();
+        std::fs::write(nested.join(".sidexignore"), "*.log\n").unwrap();
+
+        let roots = sidexignore_files(nested.to_str().unwrap(), workspace.to_str().unwrap());
+        assert_eq!(roots.len(), 2);
+
+        let only_workspace = sidexignore_files(
+            workspace.join("missing").to_str().unwrap(),
+            workspace.to_str().unwrap(),
+        );
+        assert_eq!(only_workspace.len(), 1);
+
+        std::fs::remove_dir_all(&base).ok();
     }
 }

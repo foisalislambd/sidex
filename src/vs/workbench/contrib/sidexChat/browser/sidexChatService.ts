@@ -14,7 +14,7 @@ import { isCodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { LocalToolExecutor, ILocalToolRequest, LOCAL_TOOLS_SUPPORTED } from './localToolExecutor.js';
 import { SubagentRegistry, SubagentType, SUBAGENT_CONFIGS, getAllowedTools, buildSubagentPrompt } from './subagentTypes.js';
 import { IExplorerService } from '../../files/browser/files.js';
-import { resolveServerEndpoint, serverWsUrl, SERVER_RESTARTED_EVENT } from './localServer.js';
+import { resolveServerEndpoint, serverHttpUrl, serverWsUrl, SERVER_RESTARTED_EVENT } from './localServer.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IUpdateService } from '../../../../platform/update/common/update.js';
 import { IRecentEditTracker } from '../../sidexComplete/browser/recentEditTracker.js';
@@ -126,6 +126,8 @@ export interface ISidexChatService {
 	connect(): void;
 	disconnect(): void;
 	sendMessage(text: string): void;
+	/** Review the pending git changes and stream the findings into the panel. */
+	runReview(instructions?: string): Promise<void>;
 	clearMessages(): void;
 	stopStreaming(): void;
 	setMode(mode: AgentMode): void;
@@ -371,6 +373,11 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 		return serverWsUrl(this.configurationService.getValue<string>('sidex.chat.serverUrl'));
 	}
 
+	/** HTTP form of {@link _serverUrl}, for request/response endpoints. */
+	private get _serverHttpUrl(): string {
+		return serverHttpUrl(this.configurationService.getValue<string>('sidex.chat.serverUrl'));
+	}
+
 	/**
 	 * Builds the /v1/stream WebSocket URL. The server listens on loopback and
 	 * serves only the local user, so no token is attached.
@@ -567,9 +574,150 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 		void this._sendWithContext(text);
 	}
 
+	/**
+	 * Review the pending changes in the workspace.
+	 *
+	 * The diff is collected and reviewed by the local server (`POST /v1/review`)
+	 * rather than by the chat socket: a review is a one-shot request/response
+	 * turn with no tools, no session state and no cost accounting, so it does
+	 * not belong in the agent loop. The result is streamed into the panel as a
+	 * normal assistant turn so it can be copied, searched and kept in history.
+	 */
+	async runReview(instructions?: string): Promise<void> {
+		if (this._isStreaming) {
+			this._onDidReceiveChunk.fire({
+				type: 'error',
+				content: 'Wait for the current turn to finish before starting a review.',
+			} as IStreamChunk);
+			return;
+		}
+
+		const cwd = this._gatherWorkspaceContext().cwd;
+		if (!cwd) {
+			this._onDidReceiveChunk.fire({
+				type: 'error',
+				content: 'Open a folder first — there is no working tree to review.',
+			} as IStreamChunk);
+			return;
+		}
+
+		this._enqueueUserMessage(instructions?.trim()
+			? `Review my changes — ${instructions.trim()}`
+			: 'Review my changes');
+
+		const assistant: IChatMessage = {
+			role: 'assistant',
+			content: '',
+			toolCalls: [],
+			timestamp: Date.now(),
+		};
+		this._messages.push(assistant);
+		this._currentAssistantMessage = assistant;
+		this._isThinking = true;
+		this._setStreaming(true);
+		this._onDidChangeMessages.fire(this._messages);
+
+		try {
+			const resp = await fetch(`${this._serverHttpUrl}/v1/review`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					cwd,
+					model: this._serverModel || undefined,
+					instructions: instructions?.trim() || undefined,
+				}),
+			});
+			if (!resp.ok || !resp.body) {
+				throw new Error(`review request failed (${resp.status})`);
+			}
+
+			await this._consumeReviewStream(resp.body, assistant);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			this._onDidReceiveChunk.fire({ type: 'error', content: `Review failed: ${message}` } as IStreamChunk);
+			if (!assistant.content) {
+				const index = this._messages.indexOf(assistant);
+				if (index >= 0) {
+					this._messages.splice(index, 1);
+				}
+			}
+		} finally {
+			this._isThinking = false;
+			this._setStreaming(false);
+			this._currentAssistantMessage = null;
+			if (assistant.content) {
+				this._persistAssistantMessage(assistant);
+			}
+			this._onDidChangeMessages.fire(this._messages);
+		}
+	}
+
+	/** Read the review SSE stream and append `text` events to `assistant`. */
+	private async _consumeReviewStream(body: ReadableStream<Uint8Array>, assistant: IChatMessage): Promise<void> {
+		const reader = body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = '';
+
+		const handleLine = (line: string): boolean => {
+			if (!line.startsWith('data:')) {
+				return false;
+			}
+			const raw = line.slice('data:'.length).trim();
+			if (!raw) {
+				return false;
+			}
+			let event: { type?: string; content?: string; error?: string; files?: number; added?: number; removed?: number; truncated?: boolean };
+			try {
+				event = JSON.parse(raw);
+			} catch {
+				return false;
+			}
+			switch (event.type) {
+				case 'text':
+					this._isThinking = false;
+					assistant.content += event.content ?? '';
+					this._onDidChangeMessages.fire(this._messages);
+					return false;
+				case 'diff_stats': {
+					const files = event.files ?? 0;
+					const added = event.added ?? 0;
+					const removed = event.removed ?? 0;
+					const suffix = event.truncated ? ' (diff truncated)' : '';
+					this._onDidReceiveChunk.fire({
+						type: 'notice',
+						content: `Reviewing ${files} file${files === 1 ? '' : 's'}, +${added} −${removed}${suffix}`,
+					} as IStreamChunk);
+					return false;
+				}
+				case 'error':
+					throw new Error(event.error || 'unknown review error');
+				case 'done':
+					return true;
+				default:
+					return false;
+			}
+		};
+
+		for (; ;) {
+			const { done, value } = await reader.read();
+			if (value) {
+				buffer += decoder.decode(value, { stream: true });
+			}
+			const lines = buffer.split('\n');
+			buffer = lines.pop() ?? '';
+			for (const line of lines) {
+				if (handleLine(line)) {
+					return;
+				}
+			}
+			if (done) {
+				break;
+			}
+		}
+	}
+
 	/** Show the user's turn immediately, even if the socket is down. */
-	private _enqueueUserMessage(text: string): void {
-		if (!this._sessionId) {
+	private _enqueueUserMessage(text: string): void {		if (!this._sessionId) {
 			this._sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 			this._gitStatusSent = false;
 			this._fetchGitStatus();
@@ -2067,7 +2215,7 @@ ${prompt}`,
 					const id = typeof entry === 'string' ? entry : entry?.id;
 					if (id && !models.find(m => m.id === id)) {
 						const name = typeof entry === 'object' && entry?.name ? entry.name : id;
-						models = [...models, { id, name, provider: 'custom' }];
+						models = [...models, { id, name, provider: 'custom', contextWindow: contextWindowForModel(id) }];
 					}
 				}
 			}

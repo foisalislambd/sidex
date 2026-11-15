@@ -31,6 +31,7 @@ import '../terminalContrib/typeAhead/browser/terminal.typeAhead.contribution.js'
 import '../terminalContrib/resizeDimensionsOverlay/browser/terminal.resizeDimensionsOverlay.contribution.js';
 import '../terminalContrib/sendSequence/browser/terminal.sendSequence.contribution.js';
 import '../terminalContrib/sendSignal/browser/terminal.sendSignal.contribution.js';
+import '../terminalContrib/sidexAI/browser/terminal.sidexAI.contribution.js';
 import '../terminalContrib/suggest/browser/terminal.suggest.contribution.js';
 import '../terminalContrib/wslRecommendation/browser/terminal.wslRecommendation.contribution.js';
 // Removed: voice contribution (AI/speech feature not used in SideX)

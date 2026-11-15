@@ -99,6 +99,8 @@ import { ICodeEditorService } from '../../../../editor/browser/services/codeEdit
 import { InlineEditController } from './inline/inlineEditController.js';
 import { isCodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { EditorContextKeys } from '../../../../editor/common/editorContextKeys.js';
+import { ISidexChatService } from './sidexChatService.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 
 class SidexStatusBarContribution implements IWorkbenchContribution {
 	static readonly ID = 'sidex.statusbar';
@@ -227,5 +229,46 @@ registerAction2(class extends Action2 {
 		}
 
 		controller.activate();
+	}
+});
+
+// --- Review Changes ---
+//
+// One-shot review of the pending diff. SideX exposes this both as a command
+// and as a button in the chat panel; the panel button reuses this same action
+// so the two can never drift apart.
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'sidex.reviewChanges',
+			title: nls.localize2('sidexReviewChanges', 'Sidex: Review Changes'),
+			keybinding: {
+				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyR,
+				weight: KeybindingWeight.WorkbenchContrib,
+			},
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const layoutService = accessor.get(IWorkbenchLayoutService);
+		const chatService = accessor.get(ISidexChatService);
+		const quickInputService = accessor.get(IQuickInputService);
+
+		layoutService.setPartHidden(false, Parts.SIDEX_PART);
+
+		// Optional focus lets the same action serve "review everything" and
+		// "review with a specific concern" without a second command.
+		const instructions = await quickInputService.input({
+			title: nls.localize('sidexReviewTitle', 'Review Changes'),
+			placeHolder: nls.localize('sidexReviewPlaceholder', 'Optional: what should the review focus on?'),
+			prompt: nls.localize('sidexReviewPrompt', 'Leave empty to review the whole pending diff.'),
+		});
+
+		if (instructions === undefined) {
+			return; // cancelled
+		}
+
+		await chatService.runReview(instructions);
 	}
 });

@@ -6,17 +6,11 @@ export class UserMessage extends Component {
 	private _confirmCard: HTMLElement | null = null;
 
 	constructor(msg: IChatMessage, onRevert?: () => void) {
-		super('div', 'composer-rendered-message');
-		this.element.style.cssText = 'display: block; outline: none; padding-top: 10px; margin-bottom: 6px; position: relative; width: 100%;';
+		super('div', 'composer-rendered-message', 'sc-human-turn');
 
 		const container = this.append('div', 'composer-human-message-container');
-		container.style.cssText = 'display: flex; align-items: flex-start; gap: 8px; width: 100%; background-color: color-mix(in srgb, var(--vscode-sideBar-background) 60%, transparent); outline: none; border-radius: 12px;';
-
-		const wrapper = DOM.append(container, $('div'));
-		wrapper.style.cssText = 'display: flex; flex-direction: column; align-items: flex-end; width: 100%;';
-
+		const wrapper = DOM.append(container, $('div.sc-human-wrap'));
 		const messageBox = DOM.append(wrapper, $('div.composer-human-message'));
-		messageBox.style.cssText = 'background-color: color-mix(in srgb, var(--vscode-input-background) 90%, #181818); cursor: pointer; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.5; color: var(--vscode-foreground); word-wrap: break-word; position: relative; max-width: 100%; box-sizing: border-box;';
 
 		const contentEl = DOM.append(messageBox, $('div.composer-human-message-content'));
 
@@ -26,14 +20,9 @@ export class UserMessage extends Component {
 			renderAttachmentPreviewStrip(contentEl, attachmentPreviews);
 		}
 
-		const flexRow = DOM.append(contentEl, $('div'));
-		flexRow.style.cssText = 'display: flex; width: 100%; justify-content: space-between; box-sizing: border-box; gap: 10px; align-items: center;';
-		
-		const textCol = DOM.append(flexRow, $('div'));
-		textCol.style.cssText = 'min-width: 0; display: flex; flex-direction: column;';
-
+		const flexRow = DOM.append(contentEl, $('div.sc-human-row'));
+		const textCol = DOM.append(flexRow, $('div.sc-human-text'));
 		textCol.dir = 'ltr';
-		textCol.style.cssText += ' line-height: 1.5; font-family: inherit; overflow-wrap: break-word;';
 		const textContent = stripAttachmentDisplayMarkdown(visibleContent).trim();
 		if (textContent) {
 			textCol.innerHTML = renderMarkdown(textContent);

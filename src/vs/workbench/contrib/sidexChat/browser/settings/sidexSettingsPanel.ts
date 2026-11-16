@@ -379,7 +379,7 @@ export class SidexSettingsPanel extends Disposable {
 	private _buildSidebar(part: HTMLElement): void {
 		const sidebar = document.createElement('div');
 		sidebar.className = 'modal-editor-sidebar';
-		sidebar.style.cssText = 'grid-row:2;grid-column:1;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;padding:8px;background-color:var(--vscode-sideBar-background, #181818);border-right:1px solid var(--vscode-sideBarSectionHeader-border, rgba(255,255,255,0.09));width:240px;';
+		sidebar.style.cssText = 'grid-row:2;grid-column:1;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;padding:8px;background-color:var(--vscode-sideBar-background, #181818);border-right:1px solid var(--vscode-sideBarSectionHeader-border, rgba(240,240,240,0.11));width:240px;';
 
 		// Account (First now!)
 		this._accountContainer = document.createElement('div');

@@ -496,6 +496,7 @@ export class ChatInput extends Component {
 
 		// Mode dropdown — icon + "Agent" + chevron
 		const modeBtn = DOM.append(left, $('button.sc-mode-dropdown'));
+		modeBtn.dataset.mode = 'agent';
 		const modeIconEl = DOM.append(modeBtn, $('span.sc-mode-icon'));
 		modeIconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none"><g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><line x1="10" y1="3" x2="10" y2="4"/><line x1="6.5" y1="3.9378" x2="7" y2="4.8038"/><line x1="3.9378" y1="6.5" x2="4.8038" y2="7"/><line x1="3" y1="10" x2="4" y2="10"/><line x1="3.9378" y1="13.5" x2="4.8038" y2="13"/><line x1="6.5" y1="16.0622" x2="7" y2="15.1962"/><line x1="10" y1="17" x2="10" y2="16"/><line x1="13.5" y1="16.0622" x2="13" y2="15.1962"/><line x1="16.0622" y1="13.5" x2="15.1962" y2="13"/><line x1="17" y1="10" x2="16" y2="10"/><line x1="16.0622" y1="6.5" x2="15.1962" y2="7"/><line x1="13.5" y1="3.9378" x2="13" y2="4.8038"/></g></svg>';
 		this._modeLabel = DOM.append(modeBtn, $('span.sc-mode-label'));
@@ -858,6 +859,8 @@ export class ChatInput extends Component {
 	setMode(mode: AgentMode): void {
 		this._currentMode = mode;
 		this._modeLabel.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+		const modeBtn = this.element.querySelector('.sc-mode-dropdown') as HTMLElement | null;
+		if (modeBtn) { modeBtn.dataset.mode = mode; }
 		this._modeMenu.querySelectorAll('.sc-mode-menu-item').forEach(item => {
 			(item as HTMLElement).classList.toggle('active', (item as HTMLElement).dataset.mode === mode);
 		});

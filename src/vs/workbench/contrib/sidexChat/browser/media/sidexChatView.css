@@ -29,13 +29,38 @@
 	mask-image: url('./icons/closesidex.svg');
 }
 
+/* ===== Agent panel chrome (Cursor Dark palette, theme-aware) ===== */
+.monaco-workbench .part.auxiliarybar:has(.sidex-chat-view) {
+	background: var(--sidex-agent-bg, var(--vscode-editor-background));
+}
+.monaco-workbench .part.auxiliarybar:has(.sidex-chat-view) > .title {
+	background: transparent;
+	border-bottom: none;
+	height: 35px;
+}
+.monaco-workbench .part.auxiliarybar:has(.sidex-chat-view) > .title > .title-label h2 {
+	text-transform: none;
+	font-size: 13px;
+	font-weight: 500;
+	letter-spacing: 0;
+	opacity: 0.92;
+}
+.monaco-workbench .part.auxiliarybar:has(.sidex-chat-view) > .content {
+	background: var(--sidex-agent-bg, var(--vscode-editor-background));
+}
+
 /* ===== Root Container ===== */
 .sidex-chat-view {
+	--sidex-agent-bg: var(--vscode-editor-background);
+	--sidex-agent-elevated: color-mix(in srgb, var(--vscode-foreground) 6%, var(--vscode-editor-background));
+	--sidex-agent-stroke: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	--sidex-agent-fill: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	--sidex-agent-fg-secondary: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
 	display: flex;
 	flex-direction: column;
 	height: 100%;
 	overflow: hidden;
-	background: var(--vscode-sideBar-background);
+	background: var(--sidex-agent-bg);
 	color: var(--vscode-foreground);
 	font-family: var(--vscode-font-family);
 	font-size: 13px;
@@ -44,6 +69,17 @@
 	   a far upstream ancestor and overflows the sidebar, where the sidebar's
 	   overflow:hidden clips it off-screen. */
 	position: relative;
+}
+
+.monaco-workbench.vs-dark .sidex-chat-view,
+.monaco-workbench.hc-black .sidex-chat-view,
+.vs-dark .sidex-chat-view,
+.hc-black .sidex-chat-view {
+	--sidex-agent-bg: #181818;
+	--sidex-agent-elevated: #242424;
+	--sidex-agent-stroke: rgba(240, 240, 240, 0.11);
+	--sidex-agent-fill: rgba(240, 240, 240, 0.08);
+	--sidex-agent-fg-secondary: rgba(240, 240, 240, 0.74);
 }
 
 /* ===== Header (search + action buttons) ===== */
@@ -61,9 +97,9 @@
 	display: flex;
 	align-items: center;
 	position: relative;
-	background: var(--vscode-menu-background, var(--vscode-dropdown-background));
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.09));
-	border-radius: 6px;
+	background: var(--sidex-agent-elevated, var(--vscode-input-background));
+	border: 1px solid var(--sidex-agent-stroke, var(--vscode-widget-border));
+	border-radius: 8px;
 	padding: 0 8px;
 	height: 24px;
 	min-width: 0;
@@ -561,7 +597,7 @@
 	flex: 1;
 	overflow-y: auto;
 	overflow-x: hidden;
-	padding: 8px 12px;
+	padding: 8px 16px 12px;
 	user-select: text;
 	-webkit-user-select: text;
 	min-height: 0;
@@ -603,10 +639,76 @@
 }
 
 .sc-welcome-logo {
-	width: 48px;
-	height: 48px;
+	width: 36px;
+	height: 36px;
 	color: var(--vscode-foreground);
-	opacity: 0.35;
+	opacity: 0.28;
+}
+
+.sc-welcome-title {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--vscode-foreground);
+	opacity: 0.9;
+}
+
+.sc-welcome-hint {
+	font-size: 12px;
+	color: var(--sidex-agent-fg-secondary, var(--vscode-descriptionForeground));
+	text-align: center;
+	max-width: 240px;
+	line-height: 1.4;
+}
+
+.sc-human-turn {
+	display: block;
+	width: 100%;
+	padding-top: 10px;
+	margin-bottom: 6px;
+	position: relative;
+}
+
+.composer-human-message-container {
+	display: flex;
+	justify-content: flex-end;
+	width: 100%;
+	background: transparent;
+}
+
+.sc-human-wrap {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	width: 100%;
+}
+
+.composer-human-message {
+	background: var(--sidex-agent-fill);
+	border: 1px solid var(--sidex-agent-stroke);
+	border-radius: 12px;
+	padding: 8px 12px;
+	max-width: min(100%, 480px);
+	margin-left: auto;
+	box-sizing: border-box;
+	font-size: 13px;
+	line-height: 1.55;
+	color: var(--vscode-foreground);
+	word-wrap: break-word;
+	position: relative;
+}
+
+.sc-human-row {
+	display: flex;
+	width: 100%;
+	align-items: flex-end;
+	gap: 8px;
+	box-sizing: border-box;
+}
+
+.sc-human-text {
+	min-width: 0;
+	line-height: 1.55;
+	overflow-wrap: break-word;
 }
 
 /* ===== User Message ===== */
@@ -857,7 +959,7 @@
 
 /* ===== Input Area ===== */
 .sc-input-area {
-	padding: 4px 12px 10px;
+	padding: 8px 12px 12px;
 	position: relative;
 	outline: none;
 	flex-shrink: 0;
@@ -868,15 +970,15 @@
 }
 
 .sc-input-container {
-	background: var(--vscode-sideBar-background);
-	border: 1px solid var(--vscode-widget-border, transparent);
-	border-radius: 10px;
+	background: var(--sidex-agent-elevated);
+	border: 1px solid var(--sidex-agent-stroke);
+	border-radius: 12px;
 	overflow: visible;
 	outline: none;
 }
 
 .sc-input-container:focus-within {
-	border-color: var(--vscode-widget-border, transparent);
+	border-color: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
 	outline: none;
 }
 
@@ -890,9 +992,9 @@
 	outline: none !important;
 	box-shadow: none !important;
 	font-family: var(--vscode-font-family);
-	font-size: 12px;
+	font-size: 13px;
 	line-height: 1.5;
-	padding: 10px 12px 0;
+	padding: 10px 12px 2px;
 	box-sizing: border-box;
 }
 
@@ -935,14 +1037,24 @@
 	align-items: center;
 	gap: 3px;
 	padding: 3px 6px;
-	border-radius: 4px;
+	border-radius: 6px;
 	font-size: 12px;
 	font-family: var(--vscode-font-family);
-	color: var(--vscode-descriptionForeground);
+	color: var(--sidex-agent-fg-secondary, var(--vscode-descriptionForeground));
 	background: none;
 	border: none;
 	cursor: pointer;
 	white-space: nowrap;
+}
+
+.sc-mode-dropdown[data-mode="agent"] {
+	color: #3fa266;
+}
+.sc-mode-dropdown[data-mode="plan"] {
+	color: #d2943e;
+}
+.sc-mode-dropdown[data-mode="ask"] {
+	color: #88c0d0;
 }
 
 .sc-mode-dropdown:hover {
@@ -952,9 +1064,9 @@
 .sc-mode-icon {
 	display: inline-flex;
 	align-items: center;
-	color: var(--vscode-descriptionForeground);
+	color: inherit;
 	line-height: 0;
-	opacity: 0.7;
+	opacity: 0.9;
 }
 
 .sc-mode-icon svg {
@@ -972,7 +1084,7 @@
 }
 
 .sc-mode-label {
-	color: var(--vscode-descriptionForeground);
+	color: inherit;
 }
 
 .codicon-sm {
@@ -1111,7 +1223,7 @@
 	color: var(--vscode-descriptionForeground);
 	cursor: pointer;
 	padding: 0;
-	opacity: 0.25;
+	opacity: 0.72;
 }
 
 .sc-input-icon-btn:hover {

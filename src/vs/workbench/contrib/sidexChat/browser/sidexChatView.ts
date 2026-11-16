@@ -123,7 +123,7 @@ export class SidexChatViewPane extends ViewPane {
 </g>
 </svg>`;
 
-		this._welcomeEl.innerHTML = logoSvg;
+		this._welcomeEl.innerHTML = logoSvg + '<div class="sc-welcome-title">Sidex</div><div class="sc-welcome-hint">Plan, build, or ask about this workspace</div>';
 
 		this._input = new ChatInput(this.chatService);
 		this._input.appendTo(parent);

@@ -1,0 +1,2 @@
+# Runtime vscode shim. Rewriting these must not restart `tauri dev`.
+extension-host/node_modules/

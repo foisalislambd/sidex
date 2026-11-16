@@ -2,3 +2,7 @@
 # will have compiled files and executables
 /target/
 /gen/schemas
+
+# Written by the extension host at startup. `tauri dev` watches this
+# directory, so these files must stay ignored or the app restarts in a loop.
+/extension-host/node_modules/

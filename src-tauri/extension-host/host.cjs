@@ -4995,8 +4995,8 @@ function installVscodeShim() {
     loaded: true,
     exports: null,
   };
-  const hostDir = __dirname;
-  const vscDir = path.join(hostDir, 'node_modules', 'vscode');
+  // Outside the Tauri dev watch tree. Writing next to host.cjs restarts the app.
+  const vscDir = path.join(require('os').tmpdir(), 'sidex-extension-host', 'node_modules', 'vscode');
   try {
     fs.mkdirSync(vscDir, { recursive: true });
     const writeIfChanged = (file, contents) => {
@@ -5034,7 +5034,7 @@ try {
       `export default _shim;`,
       ...namedKeys.map(k => `export const ${k} = _shim.${k};`),
     ];
-    const esmPath = path.join(__dirname, 'node_modules', 'vscode', 'index.mjs');
+    const esmPath = path.join(require('os').tmpdir(), 'sidex-extension-host', 'node_modules', 'vscode', 'index.mjs');
     const esmBody = esmLines.join('\n');
     let esmCurrent = null;
     try { esmCurrent = fs.readFileSync(esmPath, 'utf8'); } catch {}

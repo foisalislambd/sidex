@@ -48,6 +48,9 @@ export class MarkdownPreviewManager extends Disposable {
 	private readonly _previewDisposables = this._register(new DisposableStore());
 	private _debounceTimer: ReturnType<typeof setTimeout> | undefined;
 	private _currentResource: URI | undefined;
+	private _locked = true;
+	private _allowScripts = false;
+	private _recreating = false;
 
 	constructor(
 		@IEditorService private readonly _editorService: IEditorService,
@@ -57,6 +60,11 @@ export class MarkdownPreviewManager extends Disposable {
 		@IStorageService private readonly _storageService: IStorageService
 	) {
 		super();
+		this._register(
+			this._editorService.onDidActiveEditorChange(() => {
+				this._followActiveEditor();
+			})
+		);
 	}
 
 	showPreview(side?: boolean): void {
@@ -90,6 +98,59 @@ export class MarkdownPreviewManager extends Disposable {
 		return this._webviewInput !== undefined && !this._webviewInput.isDisposed();
 	}
 
+	refresh(): void {
+		this._clearDebounceTimer();
+		this._renderContent();
+	}
+
+	async showSource(): Promise<void> {
+		if (!this._currentResource) {
+			this._logService.warn('[Markdown Preview] No preview to reveal the source for');
+			return;
+		}
+		await this._editorService.openEditor({ resource: this._currentResource });
+	}
+
+	/** When unlocked, the preview follows the active markdown editor. */
+	toggleLock(): boolean {
+		this._locked = !this._locked;
+		if (!this._locked) {
+			this._followActiveEditor();
+		}
+		return this._locked;
+	}
+
+	get locked(): boolean {
+		return this._locked;
+	}
+
+	/**
+	 * Strict mode refuses to execute scripts in the preview webview.
+	 * Allowing scripts recreates the webview because that flag is fixed at creation.
+	 */
+	setAllowScripts(allow: boolean): void {
+		if (this._allowScripts === allow && this._webviewInput) {
+			this.refresh();
+			return;
+		}
+		this._allowScripts = allow;
+		const resource = this._currentResource;
+		if (!resource) {
+			return;
+		}
+		this._recreating = true;
+		try {
+			if (this._webviewInput) {
+				this._webviewInput.dispose();
+				this._webviewInput = undefined;
+			}
+		} finally {
+			this._recreating = false;
+		}
+		this._currentResource = resource;
+		this._createOrUpdateWebview(resource);
+	}
+
 	static wasPreviewOpen(storageService: IStorageService, resource: URI): boolean {
 		const openFiles: string[] = JSON.parse(storageService.get(PREVIEW_OPEN_FILES_KEY, StorageScope.WORKSPACE, '[]'));
 		return openFiles.includes(resource.toString());
@@ -107,7 +168,7 @@ export class MarkdownPreviewManager extends Disposable {
 					retainContextWhenHidden: true
 				},
 				contentOptions: {
-					allowScripts: false,
+					allowScripts: this._allowScripts,
 					localResourceRoots: [parentDir]
 				},
 				extension: undefined
@@ -126,7 +187,9 @@ export class MarkdownPreviewManager extends Disposable {
 					this._clearDebounceTimer();
 					this._webviewInput = undefined;
 					this._previewDisposables.clear();
-					this._currentResource = undefined;
+					if (!this._recreating) {
+						this._currentResource = undefined;
+					}
 				})
 			);
 
@@ -143,6 +206,22 @@ export class MarkdownPreviewManager extends Disposable {
 
 		this._renderContent();
 		this._listenToContentChanges();
+	}
+
+	private _followActiveEditor(): void {
+		if (this._locked || !this._webviewInput || this._webviewInput.isDisposed()) {
+			return;
+		}
+		const editor = this._editorService.activeEditor;
+		const resource = editor instanceof EditorInput ? editor.resource : undefined;
+		if (!resource || !resource.path.endsWith('.md')) {
+			return;
+		}
+		if (this._currentResource && resource.toString() === this._currentResource.toString()) {
+			return;
+		}
+		this._currentResource = resource;
+		this._createOrUpdateWebview(resource);
 	}
 
 	private _listenToContentChanges(): void {

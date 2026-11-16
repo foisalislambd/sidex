@@ -281,6 +281,9 @@ import './contrib/keybindings/browser/keybindings.contribution.js';
 // Snippets
 import './contrib/snippets/browser/snippets.contribution.js';
 
+// Emmet
+import './contrib/emmet/browser/emmet.contribution.js';
+
 // Formatter Help
 import './contrib/format/browser/format.contribution.js';
 

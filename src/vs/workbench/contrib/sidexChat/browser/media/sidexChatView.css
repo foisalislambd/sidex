@@ -56,6 +56,7 @@
 	--sidex-agent-stroke: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 	--sidex-agent-fill: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	--sidex-agent-fg-secondary: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+	--cursor-stroke-secondary: var(--sidex-agent-stroke);
 	display: flex;
 	flex-direction: column;
 	height: 100%;
@@ -101,7 +102,7 @@
 	border: 1px solid var(--sidex-agent-stroke, var(--vscode-widget-border));
 	border-radius: 8px;
 	padding: 0 8px;
-	height: 24px;
+	height: 26px;
 	min-width: 0;
 	transition: border-color 0.1s ease, background-color 0.1s ease;
 }
@@ -140,8 +141,8 @@
 }
 
 .sc-header-btn {
-	width: 22px;
-	height: 22px;
+	width: 26px;
+	height: 26px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -819,7 +820,7 @@
 /* ===== Assistant Body (markdown) ===== */
 .sc-assistant-body {
 	font-size: 13px;
-	line-height: 1.65;
+	line-height: 22px;
 	color: var(--vscode-foreground);
 	word-wrap: break-word;
 	user-select: text;
@@ -1079,8 +1080,8 @@
 }
 
 .sc-mode-dropdown:hover .sc-mode-icon {
-	color: var(--vscode-foreground);
-	opacity: 0.7;
+	color: inherit;
+	opacity: 1;
 }
 
 .sc-mode-label {
@@ -1099,11 +1100,11 @@
 	left: 12px;
 	margin-bottom: 4px;
 	min-width: 140px;
-	background: var(--vscode-menu-background, var(--vscode-dropdown-background));
-	border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.09));
-	border-radius: 6px;
+	background: var(--sidex-agent-elevated, var(--vscode-menu-background));
+	border: 1px solid var(--sidex-agent-stroke, var(--vscode-widget-border));
+	border-radius: 8px;
 	padding: 4px;
-	box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.16));
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 	z-index: 100;
 }
 
@@ -1170,11 +1171,11 @@
 	max-width: calc(100% - 24px);
 	box-sizing: border-box;
 	margin-bottom: 4px;
-	background: var(--vscode-menu-background, var(--vscode-dropdown-background));
-	border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.09));
-	border-radius: 6px;
+	background: var(--sidex-agent-elevated, var(--vscode-menu-background));
+	border: 1px solid var(--sidex-agent-stroke, var(--vscode-widget-border));
+	border-radius: 8px;
 	padding: 4px;
-	box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.16));
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 	z-index: 100;
 }
 
@@ -1781,11 +1782,11 @@
 /* ===== Permission Dialog ===== */
 /* ===== Permission Dialog (Cursor-style) ===== */
 .sc-permission-dialog {
-	border-radius: 8px;
+	border-radius: 10px;
 	padding: 12px 14px;
 	margin: 8px 0;
-	background: var(--vscode-editor-background);
-	border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+	background: var(--sidex-agent-elevated, var(--vscode-editor-background));
+	border: 1px solid var(--sidex-agent-stroke, rgba(240, 240, 240, 0.16));
 	animation: sc-fade-in 0.12s ease-out;
 }
 

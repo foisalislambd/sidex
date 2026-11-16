@@ -40,7 +40,7 @@ export class ThinkingBlock extends Component {
 		this._indicatorEl = document.createElement('span');
 
 		this._contentEl = this.append('div', 'sc-thinking-content');
-		this._contentEl.style.cssText = 'display: none; padding: 8px 12px; margin-bottom: 8px; border-left: 2px solid var(--vscode-widget-border, rgba(255,255,255,0.1)); font-size: 12px; color: var(--vscode-descriptionForeground); opacity: 0.8; font-family: monospace; white-space: pre-wrap; word-break: break-all;';
+		this._contentEl.style.cssText = 'display: none; padding: 6px 0 8px 10px; margin: 0 0 8px 2px; border-left: 2px solid var(--sidex-agent-stroke, rgba(240,240,240,0.11)); font-size: 12px; line-height: 1.5; color: var(--sidex-agent-fg-secondary, var(--vscode-descriptionForeground)); font-family: var(--vscode-font-family); white-space: pre-wrap; word-break: break-word;';
 
 		this.on(this._headerEl, 'click', () => this._toggle());
 	}

@@ -50,7 +50,7 @@ export class PermissionRequestDialog extends Component {
 
 	constructor(data: PermissionRequestData) {
 		super('div', 'sc-permission-dialog');
-		this.element.style.cssText = 'border: 1px solid var(--composer-pending-action-color, var(--vscode-focusBorder)); border-radius: 8px; padding: 12px; margin: 8px 0; background: var(--vscode-editor-background); display: flex; flex-direction: column; gap: 8px;';
+		this.element.style.cssText = 'border: 1px solid var(--sidex-agent-stroke, rgba(240,240,240,0.16)); border-radius: 10px; padding: 12px; margin: 8px 0; background: var(--sidex-agent-elevated, var(--vscode-editor-background)); display: flex; flex-direction: column; gap: 8px;';
 
 		// Plan approval is a dedicated flow (Cursor/Claude-Code style):
 		// show the plan itself with Approve / Keep planning.

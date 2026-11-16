@@ -81,12 +81,12 @@ export class ToolCallItem extends Component {
 			
 			const card = this.append('div', 'ui-tool-call-card ui-shell-tool-call__card');
 			card.dataset.hasContent = 'true';
-			card.style.cssText = 'border: 1px solid var(--cursor-stroke-secondary); border-radius: var(--cursor-radius-xl); overflow: hidden;';
-			
+			card.style.cssText = 'border: 1px solid var(--sidex-agent-stroke, var(--cursor-stroke-secondary)); border-radius: 10px; overflow: hidden; background: var(--sidex-agent-elevated, var(--vscode-editor-background));';
+
 			const header = DOM.append(card, DOM.$('div.ui-tool-call-card__header'));
-			header.style.cssText = 'display: flex; align-items: center; padding: 8px 10px; cursor: pointer; gap: 6px; background-color: var(--vscode-sideBar-background); transition: background 0.15s ease;';
+			header.style.cssText = 'display: flex; align-items: center; padding: 7px 10px; cursor: pointer; gap: 6px; background-color: transparent; transition: background 0.15s ease;';
 			header.addEventListener('mouseenter', () => header.style.backgroundColor = 'var(--vscode-list-hoverBackground)');
-			header.addEventListener('mouseleave', () => header.style.backgroundColor = 'var(--vscode-sideBar-background)');
+			header.addEventListener('mouseleave', () => header.style.backgroundColor = 'transparent');
 
 			const descRow = DOM.append(header, DOM.$('div.ui-shell-tool-call__description-row'));
 			descRow.style.cssText = 'display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;';

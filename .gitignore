@@ -5,6 +5,9 @@
 # ── Dependencies ─────────────────────────────────────────────────────────────
 node_modules/
 
+# Local temp dir used by `tauri dev` (process-kill script, shim files).
+.tmp/
+
 # ── Build output ─────────────────────────────────────────────────────────────
 dist/
 out/

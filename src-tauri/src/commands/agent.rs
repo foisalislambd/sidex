@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
-use tauri::State;
+use tauri::{AppHandle, State};
 use tokio::sync::Semaphore;
 
+use super::browser::BrowserState;
 use super::next_gen_tools::CheckpointStore;
 
 /// Limit concurrent agent tool executions to prevent memory blowup from
@@ -24,6 +25,21 @@ fn is_write_tool(name: &str) -> bool {
             | "patch_file"
             | "regex_replace"
             | "notebook_edit"
+    )
+}
+
+fn is_browser_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "browser_navigate"
+            | "browser_screenshot"
+            | "browser_click"
+            | "browser_type"
+            | "browser_read"
+            | "browser_scroll"
+            | "browser_console"
+            | "browser_eval"
+            | "browser_close"
     )
 }
 
@@ -66,14 +82,15 @@ pub struct AgentToolResponse {
 
 #[tauri::command]
 pub async fn agent_execute_tool(
+    app: AppHandle,
     checkpoint_state: State<'_, CheckpointStore>,
+    browser_state: State<'_, BrowserState>,
     request: AgentToolRequest,
 ) -> Result<AgentToolResponse, String> {
     let fallback_id = request.tool_call_id.clone();
 
     // Snapshot pre-edit content for write tools so checkpoint rollback and
     // chat "Reject" can actually restore files modified by the agent.
-    // block_in_place keeps the (size-capped) file read off the async executor.
     if is_write_tool(&request.name) {
         if let Some(path) = extract_target_path(&request.arguments, &request.cwd) {
             tokio::task::block_in_place(|| checkpoint_state.track_modified(&path));
@@ -90,6 +107,16 @@ pub async fn agent_execute_tool(
             });
         }
     };
+
+    // Browser/computer-use tools run via Tauri webview APIs, not sidex-agent.
+    if is_browser_tool(&request.name) {
+        let args: serde_json::Value = serde_json::from_str(&request.arguments).unwrap_or(serde_json::Value::Object(Default::default()));
+        let result = super::browser::execute_browser_tool(&app, browser_state.inner(), &request.name, &args).await;
+        return Ok(match result {
+            Ok(output) => AgentToolResponse { tool_call_id: request.tool_call_id, output, error: String::new() },
+            Err(error) => AgentToolResponse { tool_call_id: request.tool_call_id, output: String::new(), error },
+        });
+    }
 
     let result = tauri::async_runtime::spawn_blocking(move || {
         let ctx = sidex_agent::ToolContext {

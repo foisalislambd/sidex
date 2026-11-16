@@ -4,7 +4,7 @@
 
 import { URI } from '../../../../../base/common/uri.js';
 
-export type MentionType = 'file' | 'folder' | 'symbol' | 'url' | 'selection' | 'codebase';
+export type MentionType = 'file' | 'folder' | 'symbol' | 'url' | 'selection' | 'codebase' | 'gitDiff' | 'notepad';
 
 export interface MentionItem {
 	type: MentionType;
@@ -26,6 +26,13 @@ interface ICodebaseSearchProvider {
 	search(query: string, limit: number, budget: number): Promise<string>;
 }
 
+interface IGitContextProvider {
+	/** Working-tree diff (unstaged + staged) as unified diff text. */
+	getDiff(): Promise<string>;
+	/** Short status (porcelain-style text is fine). */
+	getStatus(): Promise<string>;
+}
+
 const FILE_EXTENSIONS: Record<string, string> = {
 	'.ts': 'TypeScript', '.tsx': 'TypeScript React', '.js': 'JavaScript',
 	'.jsx': 'JavaScript React', '.rs': 'Rust', '.go': 'Go', '.py': 'Python',
@@ -42,34 +49,54 @@ const TREE_DEPTH = 2;
 export class MentionResolver {
 	private _fsProvider: IFileSystemProvider;
 	private _codebaseProvider: ICodebaseSearchProvider | null;
+	private _gitProvider: IGitContextProvider | null;
 
-	constructor(fsProvider: IFileSystemProvider, codebaseProvider?: ICodebaseSearchProvider) {
+	constructor(fsProvider: IFileSystemProvider, codebaseProvider?: ICodebaseSearchProvider, gitProvider?: IGitContextProvider) {
 		this._fsProvider = fsProvider;
 		this._codebaseProvider = codebaseProvider ?? null;
+		this._gitProvider = gitProvider ?? null;
 	}
 
 	async getSuggestions(query: string): Promise<MentionItem[]> {
-		const trimmed = query.trim();
+		const trimmed = query.trim().toLowerCase();
 		if (!trimmed) {
 			return this._getDefaultSuggestions();
 		}
 
-		if (trimmed === 'codebase' || trimmed.startsWith('codebase ')) {
-			return [{
-				type: 'codebase',
-				label: 'codebase',
-				detail: 'Search the entire indexed codebase',
-				iconClass: 'codicon-search',
-			}];
+		// Built-in context mentions (Cursor-style). Keep them cheap — no I/O
+		// until the user actually selects one.
+		const specials: MentionItem[] = [];
+		if ('codebase'.startsWith(trimmed)) {
+			specials.push({ type: 'codebase', label: 'codebase', detail: 'Search the entire indexed codebase', iconClass: 'codicon-search' });
+		}
+		if ('git'.startsWith(trimmed) || 'diff'.startsWith(trimmed) || 'changes'.startsWith(trimmed)) {
+			specials.push({ type: 'gitDiff', label: 'git diff', detail: 'Current working-tree changes (staged and unstaged)', iconClass: 'codicon-git-compare', content: 'diff' });
+			specials.push({ type: 'gitDiff', label: 'git status', detail: 'Current repository status', iconClass: 'codicon-source-control', content: 'status' });
+		}
+		if ('selection'.startsWith(trimmed)) {
+			specials.push({ type: 'selection', label: 'selection', detail: 'The active editor selection', iconClass: 'codicon-selection' });
+		}
+		if ('notepad'.startsWith(trimmed) || 'notepads'.startsWith(trimmed) || trimmed === 'note') {
+			specials.push(...await this._listNotepads());
+		}
+		if (specials.length > 0 && (trimmed === 'codebase' || trimmed === 'git' || trimmed === 'diff' || trimmed === 'changes' || trimmed === 'selection' || trimmed === 'note')) {
+			return specials;
 		}
 
 		const isFileLike = trimmed.startsWith('/') || trimmed.includes('.') || trimmed.includes('/');
-		if (isFileLike) {
-			return this._searchFiles(trimmed);
+		const files = isFileLike ? await this._searchFiles(query.trim()) : await this._searchFiles(query.trim());
+		if (specials.length === 0) {
+			return files;
 		}
-
-		// Treat as general name search — match against files and folders
-		return this._searchFiles(trimmed);
+		// Merge: keep special hits first, then files, deduped and capped.
+		const merged = [...specials];
+		for (const f of files) {
+			if (!merged.some(m => m.type === f.type && m.label === f.label)) {
+				merged.push(f);
+			}
+			if (merged.length >= MAX_SUGGESTIONS) { break; }
+		}
+		return merged.slice(0, MAX_SUGGESTIONS);
 	}
 
 	async resolve(item: MentionItem): Promise<string> {
@@ -80,14 +107,71 @@ export class MentionResolver {
 				return this._resolveFolder(item);
 			case 'codebase':
 				return this._resolveCodebase(item);
+			case 'gitDiff':
+				return this._resolveGit(item);
 			case 'selection':
 				return item.content || '';
+			case 'notepad':
+				return this._resolveNotepad(item);
 			case 'url':
 				return `[URL: ${item.label}]`;
 			case 'symbol':
 				return item.content || `[Symbol: ${item.label}]`;
 			default:
 				return '';
+		}
+	}
+
+	private async _resolveNotepad(item: MentionItem): Promise<string> {
+		if (!item.fullPath) {
+			return `[Notepad not found: ${item.label}]`;
+		}
+		try {
+			const content = await this._fsProvider.readFile(URI.file(item.fullPath));
+			const body = content.trim() ? content : '[Notepad is empty]';
+			return `# Notepad: ${item.label}\n\n${body}`;
+		} catch {
+			return `[Could not read notepad: ${item.label}]`;
+		}
+	}
+
+	/** Notepads live in `.sidex/notepads/*.md` inside the workspace. */
+	private async _listNotepads(): Promise<MentionItem[]> {
+		const root = this._fsProvider.getWorkspaceFolderPath();
+		if (!root) {
+			return [];
+		}
+		try {
+			const dir = URI.file(`${root.replace(/[\\/]+$/, '')}/.sidex/notepads`);
+			const entries = await this._fsProvider.readDirectory(dir);
+			return entries
+				.filter(([name, type]) => type === 'file' && name.endsWith('.md'))
+				.sort((a, b) => a[0].localeCompare(b[0]))
+				.map(([name]) => ({
+					type: 'notepad' as MentionType,
+					label: name.replace(/\.md$/, ''),
+					detail: 'Notepad',
+					fullPath: `${root.replace(/[\\/]+$/, '')}/.sidex/notepads/${name}`,
+					iconClass: 'codicon-notebook',
+				}));
+		} catch {
+			return [];
+		}
+	}
+
+	private async _resolveGit(item: MentionItem): Promise<string> {
+		if (!this._gitProvider) {
+			return '[Git context unavailable]';
+		}
+		try {
+			if (item.content === 'status') {
+				const status = await this._gitProvider.getStatus();
+				return status || '[No git status output]';
+			}
+			const diff = await this._gitProvider.getDiff();
+			return diff || '[Working tree is clean]';
+		} catch (err) {
+			return `[Could not read git state: ${String(err)}]`;
 		}
 	}
 

@@ -20,6 +20,9 @@ import { KeyMod, KeyCode } from '../../../../base/common/keyCodes.js';
 import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { ISCMService } from '../../scm/common/scm.js';
+import { serverHttpUrl } from './localServer.js';
 import { IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { SidexChatViewPane } from './sidexChatView.js';
 import './sidexChatService.js';
@@ -101,6 +104,7 @@ import { isCodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { EditorContextKeys } from '../../../../editor/common/editorContextKeys.js';
 import { ISidexChatService } from './sidexChatService.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 
 class SidexStatusBarContribution implements IWorkbenchContribution {
 	static readonly ID = 'sidex.statusbar';
@@ -258,17 +262,310 @@ registerAction2(class extends Action2 {
 		layoutService.setPartHidden(false, Parts.SIDEX_PART);
 
 		// Optional focus lets the same action serve "review everything" and
-		// "review with a specific concern" without a second command.
-		const instructions = await quickInputService.input({
+		// targeted Bugbot-like passes (security, correctness, tests, perf).
+		const picked = await quickInputService.pick([
+			{ label: nls.localize('sidexReviewAll', 'Review all changes'), description: nls.localize('sidexReviewAllDesc', 'General correctness, security and maintainability'), id: '' },
+			{ label: nls.localize('sidexReviewBugs', 'Bugs & correctness'), description: nls.localize('sidexReviewBugsDesc', 'Logic errors, edge cases, regressions'), id: 'Focus on bugs, logic errors, edge cases, and regressions.' },
+			{ label: nls.localize('sidexReviewSecurity', 'Security'), description: nls.localize('sidexReviewSecurityDesc', 'Injection, auth, secrets, path traversal, unsafe input'), id: 'Focus on security issues: injection, auth/access control, secrets exposure, path traversal, and unsafe input handling.' },
+			{ label: nls.localize('sidexReviewTests', 'Tests & coverage'), description: nls.localize('sidexReviewTestsDesc', 'Missing or weak tests, risky untested paths'), id: 'Focus on missing or weak tests and risky untested behavior changes.' },
+			{ label: nls.localize('sidexReviewPerf', 'Performance'), description: nls.localize('sidexReviewPerfDesc', 'Hot paths, allocations, N+1, blocking work'), id: 'Focus on performance risks: hot paths, unnecessary allocations, N+1 work, blocking I/O, and scalability issues.' },
+			{ label: nls.localize('sidexReviewCustom', 'Custom focus…'), description: nls.localize('sidexReviewCustomDesc', 'Describe what to look for'), id: '__custom__' },
+		], {
 			title: nls.localize('sidexReviewTitle', 'Review Changes'),
-			placeHolder: nls.localize('sidexReviewPlaceholder', 'Optional: what should the review focus on?'),
-			prompt: nls.localize('sidexReviewPrompt', 'Leave empty to review the whole pending diff.'),
+			placeHolder: nls.localize('sidexReviewPickPlaceholder', 'Choose a review focus (Esc to cancel)'),
 		});
 
-		if (instructions === undefined) {
+		if (!picked) {
 			return; // cancelled
 		}
 
+		let instructions = (picked as { id?: string }).id ?? '';
+		if (instructions === '__custom__') {
+			const custom = await quickInputService.input({
+				title: nls.localize('sidexReviewTitle', 'Review Changes'),
+				placeHolder: nls.localize('sidexReviewPlaceholder', 'What should the review focus on?'),
+				prompt: nls.localize('sidexReviewPrompt', 'Leave empty to review the whole pending diff.'),
+			});
+			if (custom === undefined) {
+				return;
+			}
+			instructions = custom;
+		}
+
 		await chatService.runReview(instructions);
+	}
+});
+
+// --- Generate Commit Message ---
+//
+// Reads the pending diff via the local server, asks the model for a commit
+// message, and writes it into the active SCM repository's input box. The user
+// still reviews and commits — nothing is committed automatically.
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'sidex.generateCommitMessage',
+			title: nls.localize2('sidexGenerateCommitMessage', 'Sidex: Generate Commit Message'),
+			keybinding: {
+				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyM,
+				weight: KeybindingWeight.WorkbenchContrib,
+			},
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const configService = accessor.get(IConfigurationService);
+		const workspaceService = accessor.get(IWorkspaceContextService);
+		const scmService = accessor.get(ISCMService);
+		const quickInputService = accessor.get(IQuickInputService);
+
+		const folder = workspaceService.getWorkspace().folders[0];
+		if (!folder) {
+			return;
+		}
+		const cwd = folder.uri.fsPath;
+		const httpUrl = serverHttpUrl(configService.getValue<string>('sidex.complete.serverUrl'));
+
+		let result: { message?: string; error?: string };
+		try {
+			const resp = await fetch(`${httpUrl}/v1/commit-message`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ cwd }),
+			});
+			result = await resp.json() as { message?: string; error?: string };
+			if (!resp.ok) {
+				throw new Error(result.error || `HTTP ${resp.status}`);
+			}
+		} catch (err) {
+			await quickInputService.input({
+				title: nls.localize('sidexCommitMsgTitle', 'Generate Commit Message'),
+				value: '',
+				prompt: nls.localize('sidexCommitMsgFailed', 'Could not generate a commit message: {0}', String(err)),
+			});
+			return;
+		}
+
+		const message = (result.message || '').trim();
+		if (!message) {
+			return;
+		}
+
+		// Prefer the selected repository, then the first visible one.
+		const repos = Array.from(scmService.repositories);
+		const repo = repos.find(r => r.provider.rootUri?.fsPath === cwd) ?? repos[0];
+		if (repo) {
+			repo.input.setValue(message, false);
+			repo.input.setFocus();
+			return;
+		}
+
+		// No SCM provider available (e.g. not a git repo in the extension host) —
+		// show the message so the user can still copy it.
+		await quickInputService.input({
+			title: nls.localize('sidexCommitMsgTitle', 'Generate Commit Message'),
+			value: message,
+			prompt: nls.localize('sidexCommitMsgNoScm', 'No active source-control repository. Copy the message below.'),
+		});
+	}
+});
+
+// --- Shadow workspace (local speculative-edit sandbox) ---
+//
+// Cursor runs speculative agent edits in a shadow workspace so the real tree is
+// untouched until you accept. SideX's local equivalent is a detached git
+// worktree under `.sidex/shadow/`: the server creates it, the agent can edit it,
+// and the changes are reviewed/applied/discarded explicitly from here.
+//
+// These commands are the user-facing half; the server endpoints live in
+// `sidexai/sidex-server/internal/api/shadow.go`.
+
+interface IShadowResponse {
+	shadow?: string;
+	diff?: string;
+	applied?: boolean;
+	files?: number;
+	conflicts?: string[];
+	error?: string;
+}
+
+let _activeShadow: { cwd: string; shadow: string } | undefined;
+
+async function callShadowService(httpUrl: string, endpoint: string, body: Record<string, unknown>): Promise<{ ok: boolean; status: number; data: IShadowResponse }> {
+	try {
+		const resp = await fetch(`${httpUrl}/v1/shadow/${endpoint}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+		let data: IShadowResponse = {};
+		try {
+			data = await resp.json() as IShadowResponse;
+		} catch { /* empty body (202/204) */ }
+		return { ok: resp.ok, status: resp.status, data };
+	} catch (err) {
+		return { ok: false, status: 0, data: { error: String(err) } };
+	}
+}
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'sidex.shadowWorkspace.start',
+			title: nls.localize2('sidexShadowStart', 'Sidex: Start Shadow Workspace'),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const workspaceService = accessor.get(IWorkspaceContextService);
+		const configService = accessor.get(IConfigurationService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const notificationService = accessor.get(INotificationService);
+
+		const folder = workspaceService.getWorkspace().folders[0];
+		if (!folder) {
+			notificationService.notify({ severity: Severity.Warning, message: nls.localize('sidexShadowNoFolder', 'Open a folder first — a shadow workspace needs a git repository.') });
+			return;
+		}
+		const cwd = folder.uri.fsPath;
+
+		const name = await quickInputService.input({
+			title: nls.localize('sidexShadowStartTitle', 'Start Shadow Workspace'),
+			placeHolder: nls.localize('sidexShadowNamePlaceholder', 'Optional name (defaults to ws-<pid>)'),
+			prompt: nls.localize('sidexShadowNamePrompt', 'A detached worktree is created under .sidex/shadow/. Edits there never touch your working tree until you apply them.'),
+		});
+		if (name === undefined) {
+			return;
+		}
+
+		const httpUrl = serverHttpUrl(configService.getValue<string>('sidex.complete.serverUrl'));
+		const res = await callShadowService(httpUrl, 'create', { cwd, name: name.trim() || undefined });
+		if (!res.ok || !res.data.shadow) {
+			notificationService.notify({
+				severity: Severity.Error,
+				message: nls.localize('sidexShadowCreateFailed', 'Could not create a shadow workspace: {0}', res.data.error || `HTTP ${res.status}`),
+			});
+			return;
+		}
+
+		_activeShadow = { cwd, shadow: res.data.shadow };
+		notificationService.notify({
+			severity: Severity.Info,
+			message: nls.localize('sidexShadowCreated', 'Shadow workspace created at {0}. Apply or discard it from the Command Palette.', res.data.shadow),
+		});
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'sidex.shadowWorkspace.apply',
+			title: nls.localize2('sidexShadowApply', 'Sidex: Apply Shadow Workspace Changes'),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const workspaceService = accessor.get(IWorkspaceContextService);
+		const configService = accessor.get(IConfigurationService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const notificationService = accessor.get(INotificationService);
+
+		const folder = workspaceService.getWorkspace().folders[0];
+		if (!folder) {
+			return;
+		}
+		const cwd = folder.uri.fsPath;
+		const httpUrl = serverHttpUrl(configService.getValue<string>('sidex.complete.serverUrl'));
+
+		let shadow = _activeShadow?.cwd === cwd ? _activeShadow.shadow : undefined;
+		if (!shadow) {
+			const listed = await callShadowService(httpUrl, 'list', { cwd });
+			const options = (listed.data as unknown as { shadows?: string[] }).shadows ?? [];
+			if (options.length === 0) {
+				notificationService.notify({ severity: Severity.Info, message: nls.localize('sidexShadowNone', 'No shadow workspaces found for this folder.') });
+				return;
+			}
+			const picked = options.length === 1
+				? options[0]
+				: await quickInputService.pick(options.map(s => ({ label: s })), { title: nls.localize('sidexShadowPickTitle', 'Apply Shadow Workspace') });
+			if (!picked) {
+				return;
+			}
+			shadow = picked;
+		}
+
+		const res = await callShadowService(httpUrl, 'apply', { cwd, shadow });
+		if (res.status === 409) {
+			const conflicts = (res.data.conflicts ?? []).join('\n');
+			notificationService.notify({
+				severity: Severity.Warning,
+				message: nls.localize('sidexShadowConflicts', 'Shadow changes were not applied because these files changed locally:\n{0}', conflicts || (res.data.error ?? 'unknown conflict')),
+			});
+			return;
+		}
+		if (!res.ok) {
+			notificationService.notify({
+				severity: Severity.Error,
+				message: nls.localize('sidexShadowApplyFailed', 'Could not apply the shadow workspace: {0}', res.data.error || `HTTP ${res.status}`),
+			});
+			return;
+		}
+		notificationService.notify({
+			severity: Severity.Info,
+			message: nls.localize('sidexShadowApplied', 'Applied {0} changed file(s) from the shadow workspace.', res.data.files ?? 0),
+		});
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'sidex.shadowWorkspace.discard',
+			title: nls.localize2('sidexShadowDiscard', 'Sidex: Discard Shadow Workspace'),
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const workspaceService = accessor.get(IWorkspaceContextService);
+		const configService = accessor.get(IConfigurationService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const notificationService = accessor.get(INotificationService);
+
+		const folder = workspaceService.getWorkspace().folders[0];
+		if (!folder) {
+			return;
+		}
+		const cwd = folder.uri.fsPath;
+		const httpUrl = serverHttpUrl(configService.getValue<string>('sidex.complete.serverUrl'));
+
+		let shadow = _activeShadow?.cwd === cwd ? _activeShadow.shadow : undefined;
+		if (!shadow) {
+			const listed = await callShadowService(httpUrl, 'list', { cwd });
+			const options = (listed.data as unknown as { shadows?: string[] }).shadows ?? [];
+			if (options.length === 0) {
+				return;
+			}
+			shadow = await quickInputService.pick(options.map(s => ({ label: s })), { title: nls.localize('sidexShadowDiscardTitle', 'Discard Shadow Workspace') });
+			if (!shadow) {
+				return;
+			}
+		}
+
+		const res = await callShadowService(httpUrl, 'discard', { cwd, shadow });
+		if (!res.ok) {
+			notificationService.notify({
+				severity: Severity.Error,
+				message: nls.localize('sidexShadowDiscardFailed', 'Could not discard the shadow workspace: {0}', res.data.error || `HTTP ${res.status}`),
+			});
+			return;
+		}
+		if (_activeShadow?.shadow === shadow) {
+			_activeShadow = undefined;
+		}
+		notificationService.notify({ severity: Severity.Info, message: nls.localize('sidexShadowDiscarded', 'Shadow workspace discarded.') });
 	}
 });

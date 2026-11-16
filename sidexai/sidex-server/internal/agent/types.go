@@ -192,4 +192,8 @@ var LocalExecTools = map[string]bool{
 	"context_index": true, "context_search": true, "context_status": true,
 	"enter_worktree": true, "exit_worktree": true, "list_worktrees": true,
 	"checkpoint": true, "rollback": true,
+	// Browser / computer-use automation (Tauri desktop webview)
+	"browser_navigate": true, "browser_screenshot": true, "browser_click": true,
+	"browser_type": true, "browser_read": true, "browser_scroll": true,
+	"browser_console": true, "browser_eval": true, "browser_close": true,
 }

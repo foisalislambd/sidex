@@ -36,6 +36,23 @@ export interface IChatMessage {
 	toolCalls?: IToolCallInfo[];
 	timestamp: number;
 	checkpointLabel?: string;
+	/** Structured review findings (Bugbot-style triage cards). */
+	findings?: IReviewFinding[];
+	/** One-line summary for a review turn. */
+	reviewSummary?: string;
+}
+
+/** One actionable problem reported by the local review pass. */
+export interface IReviewFinding {
+	id: string;
+	severity: 'critical' | 'major' | 'minor' | 'nit';
+	file: string;
+	line: number;
+	endLine?: number;
+	title: string;
+	body: string;
+	suggestion?: string;
+	status?: 'open' | 'fixing' | 'dismissed';
 }
 
 export interface IToolCallInfo {
@@ -128,6 +145,10 @@ export interface ISidexChatService {
 	sendMessage(text: string): void;
 	/** Review the pending git changes and stream the findings into the panel. */
 	runReview(instructions?: string): Promise<void>;
+	/** Ask the agent to fix a single review finding, then mark it as being fixed. */
+	fixReviewFinding(message: IChatMessage, finding: IReviewFinding): void;
+	/** Dismiss (or restore) a review finding in place. */
+	setReviewFindingStatus(findings: IReviewFinding[], finding: IReviewFinding, status: 'open' | 'dismissed'): void;
 	clearMessages(): void;
 	stopStreaming(): void;
 	setMode(mode: AgentMode): void;
@@ -625,6 +646,7 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 					cwd,
 					model: this._serverModel || undefined,
 					instructions: instructions?.trim() || undefined,
+					format: 'findings',
 				}),
 			});
 			if (!resp.ok || !resp.body) {
@@ -645,11 +667,58 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 			this._isThinking = false;
 			this._setStreaming(false);
 			this._currentAssistantMessage = null;
-			if (assistant.content) {
+			if (!assistant.content && !assistant.findings?.length) {
+				// A clean review: keep the turn, but say so explicitly rather
+				// than leaving an empty assistant bubble behind.
+				assistant.content = assistant.reviewSummary
+					? `${assistant.reviewSummary}\n\nNo issues found.`
+					: 'No issues found in the pending changes.';
+			}
+			if (assistant.content || assistant.findings?.length) {
 				this._persistAssistantMessage(assistant);
 			}
 			this._onDidChangeMessages.fire(this._messages);
 		}
+	}
+
+	/**
+	 * Ask the agent to fix one review finding.
+	 *
+	 * The fix is routed through the normal chat turn (not a blind text splice)
+	 * so the edit goes through the same permission gate, checkpointing and diff
+	 * preview as any other agent edit — a review suggestion the model produced
+	 * is not trusted enough to write straight to disk.
+	 */
+	fixReviewFinding(message: IChatMessage, finding: IReviewFinding): void {
+		if (this._isStreaming) {
+			this._onDidReceiveChunk.fire({
+				type: 'error',
+				content: 'Wait for the current turn to finish before applying a fix.',
+			} as IStreamChunk);
+			return;
+		}
+		const location = `${finding.file}:${finding.line}${finding.endLine ? `-${finding.endLine}` : ''}`;
+		const parts = [
+			`Fix this review finding in \`${location}\`.`,
+			``,
+			`**${finding.title}** (${finding.severity})`,
+			finding.body,
+		];
+		if (finding.suggestion) {
+			parts.push('', `Suggested fix: ${finding.suggestion}`);
+		}
+		parts.push('', 'Make the minimal change that resolves it, then run any affected tests.');
+		this.sendMessage(parts.join('\n'));
+		if (message.findings) {
+			finding.status = 'fixing';
+			this._onDidChangeMessages.fire(this._messages);
+		}
+	}
+
+	/** Dismiss (or un-dismiss) a finding in the review card list. */
+	setReviewFindingStatus(_findings: IReviewFinding[], finding: IReviewFinding, status: 'open' | 'dismissed'): void {
+		finding.status = status;
+		this._onDidChangeMessages.fire(this._messages);
 	}
 
 	/** Read the review SSE stream and append `text` events to `assistant`. */
@@ -666,7 +735,10 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 			if (!raw) {
 				return false;
 			}
-			let event: { type?: string; content?: string; error?: string; files?: number; added?: number; removed?: number; truncated?: boolean };
+			let event: {
+				type?: string; content?: string; error?: string; files?: number; added?: number; removed?: number; truncated?: boolean;
+				finding?: { severity?: string; file?: string; line?: number; end_line?: number; title?: string; body?: string; suggestion?: string };
+			};
 			try {
 				event = JSON.parse(raw);
 			} catch {
@@ -678,6 +750,34 @@ export class SidexChatService extends Disposable implements ISidexChatService {
 					assistant.content += event.content ?? '';
 					this._onDidChangeMessages.fire(this._messages);
 					return false;
+				case 'summary':
+					this._isThinking = false;
+					assistant.reviewSummary = (assistant.reviewSummary ? `${assistant.reviewSummary} ` : '') + (event.content ?? '');
+					this._onDidChangeMessages.fire(this._messages);
+					return false;
+				case 'finding': {
+					this._isThinking = false;
+					const f = event.finding;
+					if (f) {
+						const severity = (f.severity === 'critical' || f.severity === 'major' || f.severity === 'nit')
+							? f.severity
+							: 'minor';
+						assistant.findings = assistant.findings ?? [];
+						assistant.findings.push({
+							id: `rf_${Date.now().toString(36)}_${assistant.findings.length}`,
+							severity,
+							file: (f.file ?? '').replace(/^\.\//, ''),
+							line: Math.max(1, f.line ?? 1),
+							endLine: f.end_line && f.end_line > (f.line ?? 1) ? f.end_line : undefined,
+							title: f.title || 'Finding',
+							body: f.body ?? '',
+							suggestion: f.suggestion || undefined,
+							status: 'open',
+						});
+						this._onDidChangeMessages.fire(this._messages);
+					}
+					return false;
+				}
 				case 'diff_stats': {
 					const files = event.files ?? 0;
 					const added = event.added ?? 0;

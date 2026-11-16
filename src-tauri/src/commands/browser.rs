@@ -655,3 +655,261 @@ async fn capture_screenshot_js(window: &tauri::WebviewWindow) -> Result<String, 
 
     eval_js(window, js).await
 }
+
+/// Execute a browser automation tool by name from the agent tool bridge.
+/// Returns the tool output as a string (JSON where appropriate).
+pub(crate) async fn execute_browser_tool(
+    app: &AppHandle,
+    state: &BrowserState,
+    name: &str,
+    args: &serde_json::Value,
+) -> Result<String, String> {
+    match name {
+        "browser_navigate" => {
+            let url = args.get("url").and_then(|v| v.as_str()).ok_or("url is required")?.to_string();
+            let wait_for = args.get("wait_for").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let screenshot = args.get("screenshot").and_then(|v| v.as_bool());
+            // ensure window
+            {
+                let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+                if inner.active_label.is_none() || app.get_webview_window(BROWSER_WINDOW_LABEL).is_none() {
+                    // drop lock before creating
+                    inner.active_label = None;
+                }
+            }
+            if app.get_webview_window(BROWSER_WINDOW_LABEL).is_none() {
+                let builder = WebviewWindowBuilder::new(
+                    app,
+                    BROWSER_WINDOW_LABEL,
+                    WebviewUrl::External("about:blank".parse().unwrap()),
+                )
+                .title("Sidex Browser")
+                .inner_size(1280.0, 900.0)
+                .visible(false);
+                #[cfg(target_os = "macos")]
+                let builder = builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true);
+                let window = builder.build().map_err(|e| format!("Failed to create browser window: {e}"))?;
+                inject_console_capture(&window)?;
+                let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+                inner.active_label = Some(BROWSER_WINDOW_LABEL.to_string());
+                inner.console_logs.clear();
+            }
+            let window = app.get_webview_window(BROWSER_WINDOW_LABEL).ok_or("Browser window not found after creation")?;
+            let parsed_url: url::Url = url.parse().map_err(|e| format!("Invalid URL: {e}"))?;
+            window.navigate(parsed_url.clone()).map_err(|e| format!("Navigation failed: {e}"))?;
+            {
+                let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+                inner.current_url = Some(url.clone());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            let _ = inject_console_capture(&window);
+            if let Some(selector) = wait_for {
+                let wait_js = format!(
+                    r#"(async () => {{
+                        const maxWait = 10000;
+                        const interval = 200;
+                        let elapsed = 0;
+                        while (elapsed < maxWait) {{
+                            if (document.querySelector({selector})) return 'found';
+                            await new Promise(r => setTimeout(r, interval));
+                            elapsed += interval;
+                        }}
+                        return 'timeout';
+                    }})()"#,
+                    selector = serde_json::to_string(&selector).unwrap_or_default()
+                );
+                let _ = eval_js(&window, &wait_js).await;
+            }
+            let title = eval_js(&window, "document.title").await.unwrap_or_default();
+            let screenshot_data = if screenshot.unwrap_or(false) {
+                capture_screenshot_js(&window).await.ok()
+            } else { None };
+            let resp = BrowserNavigateResponse { title, url: parsed_url.to_string(), screenshot: screenshot_data };
+            Ok(serde_json::to_string(&resp).map_err(|e| e.to_string())?)
+        }
+        "browser_screenshot" => {
+            let window = app.get_webview_window(BROWSER_WINDOW_LABEL).ok_or("No browser window active. Call browser_navigate first.")?;
+            let selector = args.get("selector").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let _full_page = args.get("full_page").and_then(|v| v.as_bool());
+            let js = match selector {
+                Some(sel) => format!(
+                    r#"(async () => {{
+                        const el = document.querySelector({sel});
+                        if (!el) return JSON.stringify({{error: 'Element not found'}});
+                        const rect = el.getBoundingClientRect();
+                        return JSON.stringify({{
+                            dataUrl: '',
+                            width: Math.round(rect.width),
+                            height: Math.round(rect.height),
+                            html: el.outerHTML.substring(0, 5000)
+                        }});
+                    }})()"#,
+                    sel = serde_json::to_string(&sel).unwrap_or_default()
+                ),
+                None => r#"(function() {
+                    return JSON.stringify({
+                        dataUrl: '',
+                        width: window.innerWidth,
+                        height: window.innerHeight,
+                        html: document.documentElement.outerHTML.substring(0, 10000)
+                    });
+                })()"#.to_string(),
+            };
+            let result = eval_js(&window, &js).await.map_err(|e| format!("Screenshot failed: {e}"))?;
+            let parsed: serde_json::Value = serde_json::from_str(&result).map_err(|e| format!("Parse error: {e}"))?;
+            if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
+                return Err(err.to_string());
+            }
+            let resp = BrowserScreenshotResponse {
+                data_url: parsed.get("dataUrl").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                width: parsed.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                height: parsed.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            };
+            Ok(serde_json::to_string(&resp).map_err(|e| e.to_string())?)
+        }
+        "browser_click" => {
+            let window = app.get_webview_window(BROWSER_WINDOW_LABEL).ok_or("No browser window active. Call browser_navigate first.")?;
+            let selector = args.get("selector").and_then(|v| v.as_str()).ok_or("selector is required")?;
+            let js = format!(
+                r#"(function() {{
+                    const el = document.querySelector({sel});
+                    if (!el) return 'error: element not found for selector';
+                    el.scrollIntoView({{block: 'center'}});
+                    el.click();
+                    return 'clicked';
+                }})()"#,
+                sel = serde_json::to_string(&selector).unwrap_or_default()
+            );
+            eval_js(&window, &js).await
+        }
+        "browser_type" => {
+            let window = app.get_webview_window(BROWSER_WINDOW_LABEL).ok_or("No browser window active. Call browser_navigate first.")?;
+            let selector = args.get("selector").and_then(|v| v.as_str()).ok_or("selector is required")?;
+            let text = args.get("text").and_then(|v| v.as_str()).ok_or("text is required")?;
+            let clear = args.get("clear").and_then(|v| v.as_bool()).unwrap_or(false);
+            let js = format!(
+                r#"(function() {{
+                    const el = document.querySelector({sel});
+                    if (!el) return 'error: element not found for selector';
+                    el.scrollIntoView({{block: 'center'}});
+                    el.focus();
+                    if ({clear}) {{
+                        el.value = '';
+                        el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                    }}
+                    const text = {text};
+                    el.value += text;
+                    el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    return 'typed ' + text.length + ' chars';
+                }})()"#,
+                sel = serde_json::to_string(&selector).unwrap_or_default(),
+                clear = if clear { "true" } else { "false" },
+                text = serde_json::to_string(&text).unwrap_or_default()
+            );
+            eval_js(&window, &js).await
+        }
+        "browser_read" => {
+            let window = app.get_webview_window(BROWSER_WINDOW_LABEL).ok_or("No browser window active. Call browser_navigate first.")?;
+            let sel_str = args.get("selector").and_then(|v| v.as_str()).unwrap_or("body");
+            let limit = args.get("max_length").and_then(|v| v.as_u64()).unwrap_or(5000) as usize;
+            let js = format!(
+                r#"(function() {{
+                    const el = document.querySelector({sel});
+                    if (!el) return JSON.stringify({{error: 'element not found'}});
+                    const fullText = el.innerText || el.textContent || '';
+                    const limit = {limit};
+                    const truncated = fullText.length > limit;
+                    const text = truncated ? fullText.substring(0, limit) : fullText;
+                    return JSON.stringify({{text, length: fullText.length, truncated}});
+                }})()"#,
+                sel = serde_json::to_string(&sel_str).unwrap_or_default(),
+                limit = limit
+            );
+            let result = eval_js(&window, &js).await.map_err(|e| format!("Read failed: {e}"))?;
+            let parsed: serde_json::Value = serde_json::from_str(&result).map_err(|e| format!("Parse error: {e}"))?;
+            if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
+                return Err(err.to_string());
+            }
+            let resp = BrowserReadResponse {
+                text: parsed.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                length: parsed.get("length").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                truncated: parsed.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+            Ok(serde_json::to_string(&resp).map_err(|e| e.to_string())?)
+        }
+        "browser_scroll" => {
+            let window = app.get_webview_window(BROWSER_WINDOW_LABEL).ok_or("No browser window active. Call browser_navigate first.")?;
+            let direction = args.get("direction").and_then(|v| v.as_str()).ok_or("direction is required")?;
+            let amount = args.get("pixels").and_then(|v| v.as_i64()).unwrap_or(500) as i32;
+            let (x, y) = match direction {
+                "up" => (0, -amount),
+                "down" => (0, amount),
+                "left" => (-amount, 0),
+                "right" => (amount, 0),
+                _ => return Err(format!("Invalid direction: {direction}. Use up/down/left/right.")),
+            };
+            let js = format!(
+                r#"(function() {{
+                    window.scrollBy({x}, {y});
+                    return 'scrolled ' + '{dir}' + ' by ' + Math.abs({amt}) + 'px (scrollY=' + window.scrollY + ')';
+                }})()"#,
+                x = x, y = y, dir = direction, amt = amount
+            );
+            eval_js(&window, &js).await
+        }
+        "browser_console" => {
+            let clear = args.get("clear").and_then(|v| v.as_bool()).unwrap_or(false);
+            let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+            let logs: Vec<ConsoleLogEntry> = inner.console_logs.iter()
+                .filter(|e| !e.level.starts_with("__eval_result_") && !e.level.starts_with("__eval_error_"))
+                .map(|e| ConsoleLogEntry { level: e.level.clone(), message: e.message.clone() })
+                .collect();
+            let count = logs.len();
+            if clear { inner.console_logs.clear(); }
+            let resp = BrowserConsoleResponse { logs, count };
+            Ok(serde_json::to_string(&resp).map_err(|e| e.to_string())?)
+        }
+        "browser_eval" => {
+            let window = app.get_webview_window(BROWSER_WINDOW_LABEL).ok_or("No browser window active. Call browser_navigate first.")?;
+            let expression = args.get("expression").and_then(|v| v.as_str()).ok_or("expression is required")?;
+            let wrapped = format!(
+                r#"(function() {{
+                    try {{
+                        const __result = (function() {{ return {expr}; }})();
+                        if (__result === undefined) return JSON.stringify({{result: 'undefined', error: null}});
+                        if (__result === null) return JSON.stringify({{result: 'null', error: null}});
+                        const str = (typeof __result === 'object') ? JSON.stringify(__result) : String(__result);
+                        return JSON.stringify({{result: str, error: null}});
+                    }} catch(e) {{
+                        return JSON.stringify({{result: '', error: e.message || String(e)}});
+                    }}
+                }})()"#,
+                expr = expression
+            );
+            let raw = eval_js(&window, &wrapped).await.unwrap_or_else(|e| serde_json::json!({"result": "", "error": e}).to_string());
+            let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({"result": raw, "error": null}));
+            let resp = BrowserEvalResponse {
+                result: parsed.get("result").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                error: parsed.get("error").and_then(|v| v.as_str()).map(|s| s.to_string()).filter(|s| !s.is_empty()),
+            };
+            Ok(serde_json::to_string(&resp).map_err(|e| e.to_string())?)
+        }
+        "browser_close" => {
+            let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+            if let Some(ref label) = inner.active_label {
+                if let Some(window) = app.get_webview_window(label) {
+                    window.close().map_err(|e| format!("Failed to close browser window: {e}"))?;
+                }
+            }
+            inner.active_label = None;
+            inner.current_url = None;
+            inner.console_logs.clear();
+            Ok("browser closed".to_string())
+        }
+        _ => Err(format!("unknown browser tool: {name}")),
+    }
+}
+

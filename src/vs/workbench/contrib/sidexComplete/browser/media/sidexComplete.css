@@ -1,0 +1,21 @@
+/* Subtle in-editor hint for a pending cross-file next-edit jump (Cursor-style "Tab to jump"). */
+.monaco-editor .sidex-next-edit-jump-hint {
+	color: var(--vscode-editorGhostText-foreground, rgba(153, 153, 153, 0.8));
+	font-style: italic;
+	opacity: 0.9;
+}
+
+/* Target preview (peek-before-commit) for next-edit jump */
+.monaco-editor .sidex-next-edit-target-range {
+	background-color: var(--vscode-editor-linkedEditingBackground, rgba(0, 120, 212, 0.12));
+	outline: 1px solid var(--vscode-focusBorder, rgba(0, 120, 212, 0.5));
+}
+.monaco-editor .sidex-next-edit-target-gutter {
+	border-left: 2px solid var(--vscode-focusBorder, rgba(0, 120, 212, 0.8));
+	margin-left: 3px;
+}
+.monaco-editor .sidex-next-edit-target-ghost {
+	color: var(--vscode-editorGhostText-foreground, rgba(153, 153, 153, 0.85));
+	font-style: italic;
+	opacity: 0.95;
+}

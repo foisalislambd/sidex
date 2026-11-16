@@ -29,6 +29,27 @@ type reviewRequest struct {
 	Model        string `json:"model,omitempty"`
 	MaxDiffBytes int    `json:"max_diff_bytes,omitempty"`
 	Staged       *bool  `json:"staged,omitempty"`
+	// Format selects the response shape: "markdown" (default) streams prose,
+	// "findings" asks for a structured JSON finding list so the UI can render
+	// per-finding cards with go-to/fix/dismiss actions (Bugbot-style triage).
+	Format string `json:"format,omitempty"`
+}
+
+// reviewFinding is one actionable problem found in the diff.
+type reviewFinding struct {
+	Severity   string `json:"severity"` // critical | major | minor | nit
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	EndLine    int    `json:"end_line,omitempty"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	Suggestion string `json:"suggestion,omitempty"`
+}
+
+// reviewFindingsPayload is the strict JSON shape requested in findings mode.
+type reviewFindingsPayload struct {
+	Summary  string          `json:"summary"`
+	Findings []reviewFinding `json:"findings"`
 }
 
 const (
@@ -110,23 +131,126 @@ func (h *Handler) Review(w http.ResponseWriter, r *http.Request) {
 		"truncated": stats.truncated,
 	})
 
+	structured := strings.EqualFold(strings.TrimSpace(req.Format), "findings")
 	prompt := buildReviewPrompt(diff, req)
+	if structured {
+		prompt = buildFindingsPrompt(diff, req)
+	}
 
 	client := h.clientFor(req.Model, auth.UserIDFromContext(r.Context()))
+
+	if !structured {
+		err = client.StreamChat([]ai.Message{{Role: ai.RoleUser, Content: prompt}}, nil, "", func(chunk ai.StreamChunk) {
+			switch chunk.Type {
+			case "text":
+				sendSSE(w, flusher, map[string]any{"type": "text", "content": chunk.Content})
+			case "error":
+				sendSSE(w, flusher, map[string]any{"type": "error", "error": chunk.Error})
+			}
+		})
+		if err != nil {
+			sendSSE(w, flusher, map[string]any{"type": "error", "error": err.Error()})
+			return
+		}
+
+		sendSSE(w, flusher, map[string]any{"type": "done"})
+		return
+	}
+
+	// Structured mode: the model streams JSON, so buffer it and emit one
+	// `finding` event per item at the end. Streaming raw JSON would flicker the
+	// UI without giving it anything actionable.
+	var buf strings.Builder
+	var streamErr string
 	err = client.StreamChat([]ai.Message{{Role: ai.RoleUser, Content: prompt}}, nil, "", func(chunk ai.StreamChunk) {
 		switch chunk.Type {
 		case "text":
-			sendSSE(w, flusher, map[string]any{"type": "text", "content": chunk.Content})
+			buf.WriteString(chunk.Content)
 		case "error":
-			sendSSE(w, flusher, map[string]any{"type": "error", "error": chunk.Error})
+			streamErr = chunk.Error
 		}
 	})
 	if err != nil {
 		sendSSE(w, flusher, map[string]any{"type": "error", "error": err.Error()})
 		return
 	}
+	if streamErr != "" {
+		sendSSE(w, flusher, map[string]any{"type": "error", "error": streamErr})
+		return
+	}
 
-	sendSSE(w, flusher, map[string]any{"type": "done"})
+	payload, parseErr := parseReviewFindings(buf.String())
+	if parseErr != nil {
+		// Fall back to prose so the user still sees the review instead of a
+		// parse error: the model answered, just not in the shape we asked for.
+		sendSSE(w, flusher, map[string]any{"type": "text", "content": strings.TrimSpace(buf.String())})
+		sendSSE(w, flusher, map[string]any{"type": "done"})
+		return
+	}
+
+	if s := strings.TrimSpace(payload.Summary); s != "" {
+		sendSSE(w, flusher, map[string]any{"type": "summary", "content": s})
+	}
+	for _, f := range payload.Findings {
+		sendSSE(w, flusher, map[string]any{"type": "finding", "finding": f})
+	}
+	sendSSE(w, flusher, map[string]any{"type": "done", "count": len(payload.Findings)})
+}
+
+// parseReviewFindings extracts the JSON object from a model response that may
+// be wrapped in prose or markdown fences, and normalises the fields the UI
+// depends on (severity vocabulary, line bounds, path separators).
+func parseReviewFindings(raw string) (reviewFindingsPayload, error) {
+	var payload reviewFindingsPayload
+
+	text := strings.TrimSpace(raw)
+	if i := strings.Index(text, "```"); i >= 0 {
+		rest := text[i+3:]
+		rest = strings.TrimPrefix(rest, "json")
+		if j := strings.Index(rest, "```"); j >= 0 {
+			text = rest[:j]
+		}
+	}
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start < 0 || end <= start {
+		return payload, fmt.Errorf("no JSON object in review response")
+	}
+	if err := json.Unmarshal([]byte(text[start:end+1]), &payload); err != nil {
+		return payload, fmt.Errorf("invalid review JSON: %w", err)
+	}
+
+	for i := range payload.Findings {
+		f := &payload.Findings[i]
+		f.Severity = normalizeSeverity(f.Severity)
+		f.File = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(f.File), "./"))
+		if f.Line < 1 {
+			f.Line = 1
+		}
+		if f.EndLine < f.Line {
+			f.EndLine = 0
+		}
+		f.Title = strings.TrimSpace(f.Title)
+		if f.Title == "" {
+			f.Title = "Finding"
+		}
+	}
+	return payload, nil
+}
+
+func normalizeSeverity(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "critical", "blocker", "high", "error":
+		return "critical"
+	case "major", "medium", "warning", "warn":
+		return "major"
+	case "minor", "low", "info":
+		return "minor"
+	case "nit", "style", "suggestion":
+		return "nit"
+	default:
+		return "minor"
+	}
 }
 
 type diffStats struct {
@@ -265,6 +389,31 @@ func buildReviewPrompt(diff string, req reviewRequest) string {
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString("Diff:\n```diff\n")
+	sb.WriteString(diff)
+	sb.WriteString("\n```\n")
+	return sb.String()
+}
+
+func buildFindingsPrompt(diff string, req reviewRequest) string {
+	var sb strings.Builder
+	sb.WriteString("You are reviewing a code change before it is committed, the way a careful senior engineer reviews a pull request.\n\n")
+	sb.WriteString("Ground rules:\n")
+	sb.WriteString("- Only report issues you can point at in the diff.\n")
+	sb.WriteString("- severity must be exactly one of: critical, major, minor, nit.\n")
+	sb.WriteString("- file is the repository-relative path from the diff (strip a/ or b/ prefixes).\n")
+	sb.WriteString("- line is the 1-based line number in the NEW file (the right-hand side of the diff hunk).\n")
+	sb.WriteString("- body is 1-3 sentences explaining the problem and why it matters.\n")
+	sb.WriteString("- suggestion is a short concrete fix (code or instruction) when you have one; omit it otherwise.\n")
+	sb.WriteString("- If the change is correct, return an empty findings array. Never invent problems.\n")
+	sb.WriteString("- Check for: logic errors, unhandled error paths, resource leaks, concurrency hazards, injection and path-traversal risks, missing input validation, broken API contracts, off-by-one errors, and missing tests.\n\n")
+	if ins := strings.TrimSpace(req.Instructions); ins != "" {
+		sb.WriteString("Reviewer focus requested by the user: ")
+		sb.WriteString(ins)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("Answer with ONLY a JSON object, no prose and no markdown fences:\n")
+	sb.WriteString(`{"summary":"<one or two sentences on the overall change>","findings":[{"severity":"critical|major|minor|nit","file":"<path>","line":<int>,"end_line":<int optional>,"title":"<short title>","body":"<explanation>","suggestion":"<optional concrete fix>"}]}`)
+	sb.WriteString("\n\nDiff:\n```diff\n")
 	sb.WriteString(diff)
 	sb.WriteString("\n```\n")
 	return sb.String()

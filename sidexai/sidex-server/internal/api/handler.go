@@ -1388,6 +1388,30 @@ func (h *Handler) SaveMemory(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(entry)
 }
 
+// DeleteMemory handles DELETE /v1/memory/{id}. Ownership is checked first so a
+// memory id alone is not enough to delete another user's entry.
+func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		http.Error(w, "memory id is required", 400)
+		return
+	}
+	entry, err := h.store.GetMemory(id)
+	if err != nil || entry == nil {
+		http.Error(w, "memory not found", 404)
+		return
+	}
+	if entry.UserID != "" && entry.UserID != currentUserID(r) {
+		http.Error(w, "memory not found", 404)
+		return
+	}
+	if err := h.store.DeleteMemory(id); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(204)
+}
+
 // checkPermAndMaybeDeny runs the permission gate for a tool call in the
 // handler's sequential execution path. Returns true if the tool was denied
 // or the user rejected it (result already added to session).

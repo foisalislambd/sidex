@@ -4999,12 +4999,18 @@ function installVscodeShim() {
   const vscDir = path.join(hostDir, 'node_modules', 'vscode');
   try {
     fs.mkdirSync(vscDir, { recursive: true });
-    fs.writeFileSync(path.join(vscDir, 'package.json'), JSON.stringify({
+    const writeIfChanged = (file, contents) => {
+      try {
+        if (fs.readFileSync(file, 'utf8') === contents) return;
+      } catch {}
+      fs.writeFileSync(file, contents);
+    };
+    writeIfChanged(path.join(vscDir, 'package.json'), JSON.stringify({
       name: 'vscode',
       version: '1.110.0',
       main: 'index.cjs',
     }));
-    fs.writeFileSync(path.join(vscDir, 'index.cjs'), "module.exports = globalThis.__sidex_vscode_shim__ || require('__sidex_vscode_shim__');");
+    writeIfChanged(path.join(vscDir, 'index.cjs'), "module.exports = globalThis.__sidex_vscode_shim__ || require('__sidex_vscode_shim__');");
   } catch {}
 }
 
@@ -5029,7 +5035,10 @@ try {
       ...namedKeys.map(k => `export const ${k} = _shim.${k};`),
     ];
     const esmPath = path.join(__dirname, 'node_modules', 'vscode', 'index.mjs');
-    fs.writeFileSync(esmPath, esmLines.join('\n'));
+    const esmBody = esmLines.join('\n');
+    let esmCurrent = null;
+    try { esmCurrent = fs.readFileSync(esmPath, 'utf8'); } catch {}
+    if (esmCurrent !== esmBody) fs.writeFileSync(esmPath, esmBody);
     const esmUrl = `file://${esmPath.replace(/\\/g, '/')}`;
 
     const loaderSrc = [

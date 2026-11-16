@@ -32,6 +32,16 @@ const TOOL_VERBS: Record<string, string> = {
 	repl: 'Run REPL',
 	powershell: 'Run PowerShell',
 	delete_file: 'Delete',
+	// Browser / computer use
+	browser_navigate: 'Open URL in browser',
+	browser_screenshot: 'Capture browser screenshot',
+	browser_click: 'Click in browser',
+	browser_type: 'Type in browser',
+	browser_read: 'Read from browser',
+	browser_scroll: 'Scroll browser',
+	browser_console: 'Read browser console',
+	browser_eval: 'Run JavaScript in browser',
+	browser_close: 'Close browser',
 };
 
 export class PermissionRequestDialog extends Component {
@@ -139,6 +149,31 @@ export class PermissionRequestDialog extends Component {
 			return cmd || verb;
 		}
 
+		if (toolName === 'browser_navigate') {
+			const url = (args['url'] || '') as string;
+			return url ? `${verb}: ${url}` : verb;
+		}
+		if (toolName === 'browser_click' || toolName === 'browser_read' || toolName === 'browser_screenshot') {
+			const sel = (args['selector'] || '') as string;
+			return sel ? `${verb}: ${sel}` : verb;
+		}
+		if (toolName === 'browser_type') {
+			const sel = (args['selector'] || '') as string;
+			const text = (args['text'] || '') as string;
+			const preview = text.length > 80 ? `${text.slice(0, 80)}…` : text;
+			return sel ? `${verb} "${preview}" into ${sel}` : verb;
+		}
+		if (toolName === 'browser_scroll') {
+			const dir = (args['direction'] || '') as string;
+			const px = args['pixels'];
+			return dir ? `${verb}: ${dir}${px ? ` ${px}px` : ''}` : verb;
+		}
+		if (toolName === 'browser_eval') {
+			const expr = (args['expression'] || '') as string;
+			const preview = expr.length > 120 ? `${expr.slice(0, 120)}…` : expr;
+			return preview ? `${verb}: ${preview}` : verb;
+		}
+
 		const path = (args['path'] || args['file_path'] || args['file'] || '') as string;
 		if (path) {
 			return path;
@@ -156,6 +191,14 @@ export class PermissionRequestDialog extends Component {
 		if (toolName === 'shell' || toolName === 'run_background' || toolName === 'repl' || toolName === 'powershell') {
 			return 'Run command';
 		}
+		if (toolName === 'browser_navigate') { return 'Open URL'; }
+		if (toolName === 'browser_click') { return 'Click'; }
+		if (toolName === 'browser_type') { return 'Type'; }
+		if (toolName === 'browser_eval') { return 'Run script'; }
+		if (toolName === 'browser_screenshot') { return 'Capture'; }
+		if (toolName === 'browser_scroll') { return 'Scroll'; }
+		if (toolName === 'browser_read' || toolName === 'browser_console') { return 'Read'; }
+		if (toolName === 'browser_close') { return 'Close browser'; }
 		return 'Allow';
 	}
 

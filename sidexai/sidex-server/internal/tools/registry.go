@@ -55,8 +55,8 @@ func (r *Registry) registerAll() {
 	init_lsp(r)
 	init_read_lints(r)
 
-	// Browser (navigate, screenshot, read)
-	// init_browser(r) // removed for non-CGO builds
+	// Browser / computer use (desktop app local exec)
+	init_browser(r)
 
 	// Context
 	init_context(r)

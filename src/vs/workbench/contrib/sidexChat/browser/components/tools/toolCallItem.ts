@@ -32,6 +32,16 @@ const TOOL_DESCRIPTIONS: Record<string, (args: Record<string, unknown>) => strin
 	lsp_hover: (a) => `Inspected symbol in ${fileName(a['path'])}`,
 	lsp_definition: (a) => `Found definition in ${fileName(a['path'])}`,
 	lsp_references: (a) => `Found references in ${fileName(a['path'])}`,
+	// Browser / computer use
+	browser_navigate: (a) => `Opened ${String(a['url'] || 'page')}`,
+	browser_screenshot: (a) => a['selector'] ? `Screenshot ${String(a['selector'])}` : 'Captured screenshot',
+	browser_click: (a) => `Clicked ${String(a['selector'] || 'element')}`,
+	browser_type: (a) => `Typed into ${String(a['selector'] || 'element')}`,
+	browser_read: (a) => a['selector'] ? `Read ${String(a['selector'])}` : 'Read page',
+	browser_scroll: (a) => `Scrolled ${String(a['direction'] || 'page')}`,
+	browser_console: () => 'Read browser console',
+	browser_eval: () => 'Ran browser script',
+	browser_close: () => 'Closed browser',
 };
 
 function fileName(path: unknown): string {

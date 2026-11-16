@@ -12,6 +12,7 @@ import { PlanUsageSection } from './sections/planUsageSection.js';
 import { ModelsSection } from './sections/modelsSection.js';
 import { RulesSection } from './sections/rulesSection.js';
 import { ToolsSection } from './sections/toolsSection.js';
+import { MemoriesSection } from './sections/memoriesSection.js';
 import { IndexingSection } from './sections/indexingSection.js';
 import { ConfigurationSection } from './sections/configurationSection.js';
 
@@ -36,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
 	{ id: 'models', label: 'Models', icon: 'codicon-circuit-board' },
 	{ id: 'rules', label: 'Customizations', icon: 'codicon-file-text' },
 	{ id: 'tools', label: 'Tools & MCPs', icon: 'codicon-tools' },
+	{ id: 'memories', label: 'Memories', icon: 'codicon-lightbulb' },
 	{ id: 'configuration', label: 'Configuration', icon: 'codicon-gear' },
 	{ type: 'separator' },
 	{ id: 'preferences', label: 'Preferences', icon: 'codicon-settings' },
@@ -664,6 +666,15 @@ export class SidexSettingsPanel extends Disposable {
 		const toolsSec = new ToolsSection(this._getTauriInvoke());
 		toolsSec.render(toolsWrapper);
 		this._sections.push(toolsSec);
+
+		// 5a. Memories & Notepads
+		const memoriesWrapper = document.createElement('div');
+		memoriesWrapper.id = 'section-memories';
+		memoriesWrapper.className = 'sidex-settings-scroll-section';
+		this._content.appendChild(memoriesWrapper);
+		const memoriesSec = new MemoriesSection(this._getTauriInvoke());
+		memoriesSec.render(memoriesWrapper);
+		this._sections.push(memoriesSec);
 
 		// 5b. Configuration
 		const configWrapper = document.createElement('div');

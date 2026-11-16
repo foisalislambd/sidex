@@ -7,6 +7,7 @@ import { MentionPopup } from './mentionPopup.js';
 import { MentionResolver, MentionItem } from '../../context/mentionResolver.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { ISidexChatService } from '../../sidexChatService.js';
+import { serverHttpUrl } from '../../localServer.js';
 
 export type AgentMode = 'agent' | 'plan' | 'ask';
 
@@ -640,7 +641,7 @@ export class ChatInput extends Component {
 		this._stopBtn.style.display = 'none';
 
 		// Initialize mention system
-		this._mentionResolver = new MentionResolver({
+		const fsProvider = {
 			findFiles: async (pattern: string, maxResults: number): Promise<URI[]> => {
 				try {
 					const vscode = (globalThis as any).vscode;
@@ -679,7 +680,34 @@ export class ChatInput extends Component {
 				} catch { /* fallback */ }
 				return undefined;
 			},
-		});
+		};
+		const gitProvider = {
+			getDiff: async (): Promise<string> => {
+				const cwd = fsProvider.getWorkspaceFolderPath();
+				if (!cwd) { return ''; }
+				const resp = await fetch(`${serverHttpUrl()}/v1/git-diff`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ cwd }),
+				});
+				if (!resp.ok) { return ''; }
+				const data = await resp.json() as { diff?: string };
+				return data.diff || '';
+			},
+			getStatus: async (): Promise<string> => {
+				const cwd = fsProvider.getWorkspaceFolderPath();
+				if (!cwd) { return ''; }
+				const resp = await fetch(`${serverHttpUrl()}/v1/git-status`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ cwd }),
+				});
+				if (!resp.ok) { return ''; }
+				const data = await resp.json() as { status?: string };
+				return data.status || '';
+			},
+		};
+		this._mentionResolver = new MentionResolver(fsProvider, undefined, gitProvider);
 
 		this._mentionPopup = new MentionPopup(this.element, (item) => this._onMentionSelected(item));
 		this._disposables.add(this._mentionPopup);

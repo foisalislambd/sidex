@@ -7,6 +7,7 @@ import { renderMarkdown } from '../markdownRenderer.js';
 import { Collapsible } from '../collapsible/collapsible.js';
 import { ToolCallItem, FileEditInfo } from '../tools/toolCallItem.js';
 import { ThinkingBlock } from './thinkingBlock.js';
+import { ReviewFindings, ReviewFindingActions } from './reviewFindings.js';
 import { ILanguageService } from '../../../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../../../editor/common/services/model.js';
 
@@ -19,10 +20,13 @@ export class AssistantMessage extends Component {
 	private readonly _onCopy = this._register(new Emitter<string>());
 	readonly onCopy: Event<string> = this._onCopy.event;
 	private _thinkingBlock: ThinkingBlock | null = null;
+	private _reviewFindings: ReviewFindings | null = null;
+	private _reviewActions: ReviewFindingActions | undefined;
+	private _findingsHost: HTMLElement | null = null;
 
 	get thinkingBlock(): ThinkingBlock | null { return this._thinkingBlock; }
 
-	constructor(msg: IChatMessage, turnDurationMs?: number, onFileClick?: (path: string) => void, isThinking?: boolean, allMessages?: readonly IChatMessage[], languageService?: ILanguageService, modelService?: IModelService) {
+	constructor(msg: IChatMessage, turnDurationMs?: number, onFileClick?: (path: string) => void, isThinking?: boolean, allMessages?: readonly IChatMessage[], languageService?: ILanguageService, modelService?: IModelService, reviewActions?: ReviewFindingActions) {
 		super('div', 'composer-rendered-message');
 		this.element.style.cssText = 'display: block; outline: none; padding-top: 0px; padding-bottom: 0px; background-color: var(--composer-pane-background); opacity: 1; z-index: 99; margin-bottom: 12px;';
 
@@ -117,6 +121,32 @@ export class AssistantMessage extends Component {
 				}, 1200);
 			});
 		}
+
+		// Structured review findings (rendered after the prose summary).
+		this._reviewActions = reviewActions;
+		this.updateReviewFindings(msg);
+	}
+
+	/**
+	 * (Re)render the review finding cards. Called on construction and whenever
+	 * the message's findings change (a finding dismissed or a fix requested).
+	 */
+	updateReviewFindings(msg: IChatMessage): void {
+		if (!msg.findings?.length && !msg.reviewSummary) {
+			return;
+		}
+		this._reviewFindings?.dispose();
+		this._reviewFindings = null;
+		if (this._findingsHost) {
+			this._findingsHost.remove();
+			this._findingsHost = null;
+		}
+		this._findingsHost = document.createElement('div');
+		this._findingsHost.className = 'sc-review-host';
+		this.element.appendChild(this._findingsHost);
+		this._reviewFindings = new ReviewFindings(msg, this._reviewActions);
+		this._reviewFindings.appendTo(this._findingsHost);
+		this._register(this._reviewFindings);
 	}
 }
 

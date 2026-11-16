@@ -20,6 +20,7 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { URI } from '../../../../base/common/uri.js';
+import { Range } from '../../../../editor/common/core/range.js';
 import { ILanguageService } from '../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../editor/common/services/model.js';
 import { ChatHeader } from './components/toolbar/chatHeader.js';
@@ -593,7 +594,11 @@ export class SidexChatViewPane extends ViewPane {
 				const isThinking = this.chatService.isThinking && i === messages.length - 1;
 				const comp = new AssistantMessage(msg, duration, (filePath) => {
 					this._openFile(filePath);
-				}, isThinking, messages, this.languageService, this.modelService);
+				}, isThinking, messages, this.languageService, this.modelService, {
+					onGoTo: (file, line) => this._openFileAt(file, line),
+					onFix: (finding) => this.chatService.fixReviewFinding(msg, finding),
+					onSetDismissed: (finding, dismissed) => this.chatService.setReviewFindingStatus(msg.findings ?? [], finding, dismissed ? 'dismissed' : 'open'),
+				});
 				comp.appendTo(this._messagesEl);
 				this._viewDisposables.add(comp);
 				this._viewDisposables.add(comp.onCopy(text => {
@@ -632,6 +637,9 @@ export class SidexChatViewPane extends ViewPane {
 			newBody.innerHTML = renderMarkdown(msg.content);
 			comp.element.appendChild(newBody);
 		}
+		// Findings arrive (and change status) after the message is first
+		// rendered, so refresh the cards in place.
+		comp.updateReviewFindings(msg);
 	}
 
 	private _updateStreamingCursor(): void {
@@ -748,6 +756,19 @@ export class SidexChatViewPane extends ViewPane {
 	private _openFile(filePath: string): void {
 		const uri = URI.file(filePath);
 		this.editorService.openEditor({ resource: uri }).then(undefined, () => { /* ignore */ });
+	}
+
+	/** Open a file and put the cursor on a specific line (review finding "go to"). */
+	private _openFileAt(filePath: string, line: number): void {
+		const uri = URI.file(filePath);
+		const lineNumber = Math.max(1, line);
+		this.editorService.openEditor({
+			resource: uri,
+			options: {
+				selection: new Range(lineNumber, 1, lineNumber, 1),
+				revealIfOpened: true,
+			},
+		}).then(undefined, () => { /* ignore */ });
 	}
 
 	private _showPermissionDialog(data: PermissionRequestData): void {

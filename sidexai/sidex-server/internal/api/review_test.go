@@ -167,3 +167,63 @@ func TestReviewHandlerEmptyTreeStreamsError(t *testing.T) {
 	}
 }
 
+
+func TestParseReviewFindingsPlainJSON(t *testing.T) {
+	raw := `{"summary":"Adds validation","findings":[{"severity":"Critical","file":"b/internal/api/x.go","line":42,"title":"Unchecked error","body":"The error is ignored."},{"severity":"nope","file":"./y.go","line":0,"title":""}]}`
+	payload, err := parseReviewFindings(raw)
+	if err != nil {
+		t.Fatalf("parseReviewFindings: %v", err)
+	}
+	if payload.Summary != "Adds validation" {
+		t.Errorf("summary = %q", payload.Summary)
+	}
+	if len(payload.Findings) != 2 {
+		t.Fatalf("findings = %d, want 2", len(payload.Findings))
+	}
+	if payload.Findings[0].Severity != "critical" {
+		t.Errorf("severity = %q, want critical", payload.Findings[0].Severity)
+	}
+	if payload.Findings[0].File != "b/internal/api/x.go" {
+		t.Errorf("file = %q", payload.Findings[0].File)
+	}
+	// Unknown severity falls back to minor; bad line clamps to 1; empty title
+	// gets a placeholder so the card is never blank.
+	if payload.Findings[1].Severity != "minor" {
+		t.Errorf("fallback severity = %q, want minor", payload.Findings[1].Severity)
+	}
+	if payload.Findings[1].Line != 1 {
+		t.Errorf("line = %d, want 1", payload.Findings[1].Line)
+	}
+	if payload.Findings[1].Title == "" {
+		t.Error("title should get a placeholder")
+	}
+}
+
+func TestParseReviewFindingsFencedAndProse(t *testing.T) {
+	raw := "Here is the review:\n```json\n{\"summary\":\"ok\",\"findings\":[{\"severity\":\"nit\",\"file\":\"a.go\",\"line\":3,\"title\":\"Naming\",\"body\":\"Prefer a clearer name.\"}]}\n```\nThanks!"
+	payload, err := parseReviewFindings(raw)
+	if err != nil {
+		t.Fatalf("parseReviewFindings: %v", err)
+	}
+	if len(payload.Findings) != 1 || payload.Findings[0].File != "a.go" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+func TestParseReviewFindingsRejectsNonJSON(t *testing.T) {
+	if _, err := parseReviewFindings("Everything looks good to me."); err == nil {
+		t.Fatal("expected an error for prose-only output")
+	}
+}
+
+func TestNormalizeSeverity(t *testing.T) {
+	cases := map[string]string{
+		"CRITICAL": "critical", "blocker": "critical", "warn": "major",
+		"info": "minor", "style": "nit", "": "minor", "bogus": "minor",
+	}
+	for in, want := range cases {
+		if got := normalizeSeverity(in); got != want {
+			t.Errorf("normalizeSeverity(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

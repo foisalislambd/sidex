@@ -42,6 +42,18 @@ export interface INextEditPrediction {
 	reason?: string;
 }
 
+export interface IPendingNextEditJump {
+	/** Absolute path of the file that contains the predicted edit. */
+	filePath: string;
+	startLine: number;
+	endLine: number;
+	character: number;
+	replacement: string;
+	reason?: string;
+	/** True once the user has navigated to the target and is previewing before commit. */
+	previewed?: boolean;
+}
+
 interface ICachedPrediction {
 	requestVersionId: number;
 	receivedAt: number;
@@ -56,6 +68,30 @@ export class SidexNextEditProvider implements InlineCompletionsProvider {
 	private _lastTriggeredAt = 0;
 	private _debounceTimer: ReturnType<typeof setTimeout> | undefined;
 	private _pendingResolve: ((value: INextEditPrediction | null) => void) | null = null;
+	/**
+	 * Cross-file prediction that could not be surfaced as inline ghost text in
+	 * the current editor. The trigger command consumes it and navigates there.
+	 */
+	private _pendingJump: IPendingNextEditJump | null = null;
+	/** Optional hook so the workbench can surface "Tab to jump" affordances. */
+	onPendingJumpChange: ((jump: IPendingNextEditJump | null) => void) | undefined;
+
+	get pendingJump(): IPendingNextEditJump | null {
+		return this._pendingJump;
+	}
+
+	setPendingJump(jump: IPendingNextEditJump | null): void {
+		const prev = this._pendingJump;
+		this._pendingJump = jump;
+		const changed = (prev?.filePath !== jump?.filePath) || (prev?.startLine !== jump?.startLine) || (prev?.replacement !== jump?.replacement) || (!!prev !== !!jump);
+		if (changed) {
+			this.onPendingJumpChange?.(jump);
+		}
+	}
+
+	clearPendingJump(): void {
+		this.setPendingJump(null);
+	}
 
 	constructor(
 		private readonly _configService: IConfigurationService,
@@ -98,7 +134,11 @@ export class SidexNextEditProvider implements InlineCompletionsProvider {
 			prediction = cached.prediction;
 		} else {
 			prediction = await this._requestPrediction(model, position, token);
-			if (!prediction || token.isCancellationRequested) {
+			if (token.isCancellationRequested) {
+				return empty;
+			}
+			if (!prediction) {
+				this.setPendingJump(null);
 				return empty;
 			}
 			this._cache.set(key, {
@@ -110,6 +150,10 @@ export class SidexNextEditProvider implements InlineCompletionsProvider {
 		}
 
 		const item = this._toInlineItem(model, position, prediction);
+		if (!item && !this._pendingJump) {
+			// No inline item and no cross-file jump produced — drop any stale jump.
+			this.setPendingJump(null);
+		}
 		return item ? { items: [item] } : empty;
 	}
 
@@ -130,6 +174,7 @@ export class SidexNextEditProvider implements InlineCompletionsProvider {
 		this._pendingResolve = null;
 		this._cache.clear();
 		this._inFlight.clear();
+		this.setPendingJump(null);
 	}
 
 	/**
@@ -147,17 +192,38 @@ export class SidexNextEditProvider implements InlineCompletionsProvider {
 		prediction: INextEditPrediction,
 	): InlineCompletion | null {
 		if (prediction.kind !== 'jump' && prediction.kind !== 'insert') {
+			if (this._pendingJump) {
+				this.setPendingJump(null);
+			}
 			return null;
 		}
 		const replacement = prediction.replacement ?? '';
 		if (replacement.trim().length === 0) {
+			if (this._pendingJump) {
+				this.setPendingJump(null);
+			}
 			return null;
 		}
 
-		// A prediction for a different file than the one being rendered is not
-		// actionable here: the client cannot navigate to it from ghost text.
+		// A prediction for a different file than the one being rendered cannot be
+		// shown as ghost text, but it is still the "next edit" — surface it as a
+		// pending jump so the trigger command can open the file and apply it.
 		if (prediction.file_path && model.uri.fsPath && prediction.file_path !== model.uri.fsPath) {
+			const maxLineHint = Math.max(1, prediction.start_line ?? prediction.line ?? 1);
+			this.setPendingJump({
+				filePath: prediction.file_path,
+				startLine: clamp(prediction.start_line ?? prediction.line ?? 1, 1, maxLineHint),
+				endLine: clamp(prediction.end_line ?? prediction.start_line ?? prediction.line ?? 1, 1, maxLineHint),
+				character: clamp(prediction.character ?? 1, 1, 10_000),
+				replacement,
+				reason: prediction.reason,
+			});
 			return null;
+		}
+
+		// Same-file prediction supersedes any stale cross-file jump.
+		if (this._pendingJump) {
+			this.setPendingJump(null);
 		}
 
 		const maxLine = model.getLineCount();
@@ -189,10 +255,11 @@ export class SidexNextEditProvider implements InlineCompletionsProvider {
 			return null;
 		}
 
-		// Predictions anchored at the cursor are ordinary completions; the FIM
-		// provider already covers those, so only surface the "away from cursor"
-		// case that makes next-edit distinct.
-		if (prediction.kind === 'insert' && startLine === cursor.lineNumber) {
+		// Predictions anchored at the cursor on the current line are ordinary
+		// completions; the FIM provider already covers those, so only surface the
+		// "away from cursor" case that makes next-edit distinct. A jump to a
+		// different line in the same file is still valuable.
+		if (prediction.kind === 'insert' && startLine === cursor.lineNumber && !multiLine) {
 			return null;
 		}
 
